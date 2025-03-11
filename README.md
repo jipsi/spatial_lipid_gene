@@ -111,12 +111,6 @@ Available on Zenodo: https://zenodo.org/record/XXXXX
 - To reproduce spatial integration, start with `spatial_integrated_prepare_rds.Rmd`.
 - Alternatively, load prepared .rds files and start directly with `spatial_downstream_analysis.Rmd`.
 
-### Mass Spectrometry Imaging (MSI):
-- Raw MSI data processing steps, lipid annotations, and spatial mapping scripts are provided in `MSI_analysis.Rmd`.
-
-### Cell sorting and proteomics:
-- Flow cytometry sorting strategy and downstream proteomic analyses scripts provided in `proteomics_analysis.Rmd`.
-
 ### Cell2location Spatial Integration:
 - Cell2location was run on GPU nodes using the University of York's HPC (Viking), requiring ~2 hours for complete spatial mapping.
 - Python scripts provided (`config.py`, `train_ref.py`, `deconvolute.py`) with necessary .h5ad files available upon publication on Zenodo.
