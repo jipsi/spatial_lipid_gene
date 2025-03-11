@@ -99,7 +99,7 @@ loaded via a namespace (and not attached):
 - End-to-end analysis (R scripts): ~1–2 hours on Windows 10 with 64GB RAM, 8-core CPU (Intel Core i7-9700 or equivalent).
 
 ### Additional files required:
-Available on Zenodo: https://zenodo.org/record/XXXXX
+Rds files will be made available upon request.
 
 ## Repository Structure & Instructions
 
