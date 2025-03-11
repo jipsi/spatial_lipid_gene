@@ -1,0 +1,263 @@
+---
+title: "introduction"
+output: rmarkdown::html_vignette
+vignette: >
+  %/VignetteIndexEntry{introduction}
+  %/VignetteEngine{knitr::rmarkdown}
+  %/VignetteEncoding{UTF-8}
+---
+
+```{r set up message=FALSE}
+#library(customSeuratAnalysis)
+library(Seurat)
+library(dplyr)
+library(sqldf)
+library(ggplot2)
+# library(SingleCellExperiment)
+#library(glmGamPoi)
+library(patchwork)
+library(Seurat)
+library(sqldf)
+library(dplyr)
+#library(AUCell)
+library(SingleCellExperiment)
+library(mclust)
+#library(slingshot)
+library(RColorBrewer)
+library(sqldf)
+library(ggpubr)
+#library(tradeSeq)
+
+library(data.table)
+#library(GSEABase)
+library(plotly)
+library(readxl)
+library(EnhancedVolcano)
+
+#library(GEOquery)
+
+library(spatstat)
+library(gplots)
+library(corrplot)
+library(stringr)
+
+library(VennDiagram)
+library(grid)#for printing PDFs off finder makrer
+
+library(reshape2)
+library(ggplot2)
+
+#library(slingshot)
+library(tidyr)
+#define study path
+#cell_type<-"CD8"
+
+#os preamble
+mac_preamble <- "/Volumes/Macintosh HD/Users/shoumit/shoumit.dey@york.ac.uk - Google Drive/My Drive/"
+win_preamble <- "D:/GoogleDrive/"
+
+study_name<-"ymp_d28"
+study_path<-paste0(win_preamble, "spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/")
+coregistration_path<-paste0(win_preamble, "spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/coregistration/")
+
+
+#
+all_samples <-c("334-I2","334-N2-I4","334-N3","345-I3","345-I5","345-N1","345-N4")
+sample_group <- c("inf","naive_inf","naive","inf","inf","naive","naive")
+
+
+cell2location_abundances<-read.csv(paste0(win_preamble, "spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/cell2location/cell2location_map/means_cell_abundance_w_sf_barcoded.csv"))
+rownames(cell2location_abundances)<-cell2location_abundances$spot_id
+cell2location_abundances$spot_id<-NULL
+celltypes<-colnames(cell2location_abundances)
+
+save_path<-paste0(study_path,"R/woI4/")
+save_on<-1
+```
+
+
+```{r load_coreg_data}
+#LOAD COREGISTRATION DATA
+# Sys.glob(file.path(paste0("D:/GoogleDrive/spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/coregistration/",item,"/*_",item,"_positive.csv")))
+list_coreg <- list()
+list_both_coreg <- list()
+data_size <- 0
+data_list <- ""
+#infected mice
+for(item in c("I2","I3","I4","I5")){
+ for(ion_mode in c("neg", "pos")){
+       #key
+      key<-paste0(item,"_",ion_mode)
+      list_coreg[[key]] <- read.csv(paste0(win_preamble, "spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/coregistration/",item,"/",ion_mode,"/infected_",item,".csv"))
+      rownames(list_coreg[[key]])<-list_coreg[[key]]$Var1
+ }
+ key1 <- paste0(item,"_neg")
+ key2 <- paste0(item,"_pos")
+ print(list_coreg[[key1]])
+ print(list_coreg[[key2]])
+ list_both_coreg[[item]] <- dplyr::full_join(list_coreg[[key1]], list_coreg[[key2]], by = "Var1")
+ #qc check
+ print(paste0("The full join of negative ion with ",length(rownames(list_coreg[[key1]])), " entries and positive ion with ",length(rownames(list_coreg[[key2]])), " entries add up to a grand total of ",length(rownames(list_both_coreg[[item]])) ))
+ 
+ rownames(list_both_coreg[[item]])<-list_both_coreg[[item]]$Var1
+ list_both_coreg[[item]]<-list_both_coreg[[item]][, c(grep("^mz",colnames(list_both_coreg[[item]]), value = T))]
+ list_both_coreg[[item]]<-list_both_coreg[[item]] %>% mutate_all(funs(replace_na(.,0)))
+ #clean up
+ list_coreg[[key1]]<-list_coreg[[key1]][, c(grep("^mz",colnames(list_coreg[[key1]]), value = T))]
+ list_coreg[[key1]]<-list_coreg[[key1]] %>% mutate_all(funs(replace_na(.,0)))
+ #clean up
+ list_coreg[[key2]]<-list_coreg[[key2]][, c(grep("^mz",colnames(list_coreg[[key2]]), value = T))]
+ list_coreg[[key2]]<-list_coreg[[key2]] %>% mutate_all(funs(replace_na(.,0)))
+ #length of data
+ data_size <- data_size + length(rownames(list_both_coreg[[item]]))
+  #names of daya
+ data_list <- c(data_list, rownames(list_both_coreg[[item]])) 
+}
+
+
+##repeating for naive mice
+for(item in c("N1","N2","N3","N4")){
+  for(ion_mode in c("neg", "pos")){
+      #key
+      key<-paste0(item,"_",ion_mode)
+      list_coreg[[key]] <- read.csv(paste0(win_preamble, "spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/coregistration/",item,"/",ion_mode,"/naive_",item,".csv"))
+      rownames(list_coreg[[key]])<-list_coreg[[key]]$Var1
+ }
+ key1 <- paste0(item,"_neg")
+ key2 <- paste0(item,"_pos")
+ list_both_coreg[[item]] <- dplyr::full_join(list_coreg[[key1]], list_coreg[[key2]], by = "Var1")
+ 
+  #qc check
+ print(paste0("The full join of negative ion with ",length(rownames(list_coreg[[key1]])), " entries and positive ion with ",length(rownames(list_coreg[[key2]])), " entries add up to a grand total of ",length(rownames(list_both_coreg[[item]])) ))
+ 
+ rownames(list_both_coreg[[item]])<-list_both_coreg[[item]]$Var1
+ list_both_coreg[[item]]<-list_both_coreg[[item]][, c(grep("^mz",colnames(list_both_coreg[[item]]), value = T))]
+ list_both_coreg[[item]]<-list_both_coreg[[item]] %>% mutate_all(funs(replace_na(.,0))) 
+ #clean up
+ list_coreg[[key1]]<-list_coreg[[key1]][, c(grep("^mz",colnames(list_coreg[[key1]]), value = T))]
+ list_coreg[[key1]]<-list_coreg[[key1]] %>% mutate_all(funs(replace_na(.,0)))
+ #clean up
+ list_coreg[[key2]]<-list_coreg[[key2]][, c(grep("^mz",colnames(list_coreg[[key2]]), value = T))]
+ list_coreg[[key2]]<-list_coreg[[key2]] %>% mutate_all(funs(replace_na(.,0)))
+  #length of data
+ data_size <- data_size + length(rownames(list_both_coreg[[item]]))
+ #names of daya
+ data_list <- c(data_list, rownames(list_both_coreg[[item]])) 
+}
+
+print(paste0("The final number of spots for which there is lipid data is ",data_size))
+print(length(unique(data_list)))
+
+
+```
+
+```{r convert_to_mex}
+library(Matrix)
+
+# listMSISeurat<-list()
+# for(item in c("I2","I3","I4","N2","N3","N4")){
+#   for(ion_mode in c("pos", "neg"))
+#   {
+#     #key
+#     key<-paste0(item,"_",ion_mode)
+#     #create a matrix from the data.frame gbm
+#     gbm_matrix <- data.matrix(t(list_coreg[[key]]))
+#     # make  sparse matrix
+#     sparse.gbm <- as(gbm_matrix, "dgCMatrix")
+#     #Matrix(gbm , sparse = T )
+#     head(sparse.gbm)
+#     ## Market Exchange Format (MEX) format
+#     writeMM(obj = sparse.gbm, file=paste0(coregistration_path,"/",item,"/",ion_mode,"/matrix.mtx"))
+#     
+#     # save msi and $_. names
+#     write(x = rownames(list_coreg[[key]]), file = paste0(coregistration_path,"/",item,"/",ion_mode,"/barcodes.tsv"))
+#     write(x = colnames(list_coreg[[key]]), file = paste0(coregistration_path,"/",item,"/",ion_mode,"/genes.tsv"))
+#     
+#     listMSISeurat[[key]] <- Read10X(data.dir = paste0(coregistration_path,"/",item,"/",ion_mode), gene.column = 1)
+#     listMSISeurat[[key]] <- CreateSeuratObject(counts = listMSISeurat[[key]], project = paste0(key,"d28"), min.cells = 1, min.features = 1)
+#     
+#   }
+# 
+# }
+# mergedSeuratObjList<-list()
+# for(item in c("I2","I3","I4","N2","N3","N4")){
+#   mergedSeuratObjList[[item]]<-merge(listMSISeurat[[paste0(item,"_pos")]], listMSISeurat[[paste0(item,"_neg")]])
+# }
+# seuratMSIObj <- merge(listMSISeurat[[1]], y = c(listMSISeurat[[2]],listMSISeurat[[3]],listMSISeurat[[4]],listMSISeurat[[5]],listMSISeurat[[6]],listMSISeurat[[7]],listMSISeurat[[8]],listMSISeurat[[9]],listMSISeurat[[10]],listMSISeurat[[11]],listMSISeurat[[12]],listMSISeurat[[13]],listMSISeurat[[14]]))
+##############################################################################
+##########COMBINED ONLY#######################################################
+##############################################################################
+listMSICombinedSeurat<-list()
+for(key in c("I2","I3","I4","I5","N2","N3","N4","N1")){
+    #create a matrix from the data.frame gbm
+    # gbm_matrix <- data.matrix(t(list_both_coreg[[key]]))
+    # # make  sparse matrix
+    # sparse.gbm <- as(gbm_matrix, "dgCMatrix")
+    # #Matrix(gbm , sparse = T )
+    # head(sparse.gbm)
+    # ## Market Exchange Format (MEX) format
+    # writeMM(obj = sparse.gbm, file=paste0(coregistration_path,"/",key,"/pos_neg/matrix.mtx"))
+    # 
+    # # save msi and $_. names
+    # write(x = rownames(list_both_coreg[[key]]), file = paste0(coregistration_path,"/",key,"/pos_neg/barcodes.tsv"))
+    # write(x = colnames(list_both_coreg[[key]]), file = paste0(coregistration_path,"/",key,"/pos_neg/genes.tsv"))
+    # 
+    listMSICombinedSeurat[[key]] <- Read10X(data.dir = paste0(coregistration_path,"/",key,"/pos_neg/"), gene.column = 1)
+    listMSICombinedSeurat[[key]] <- CreateSeuratObject(counts = listMSICombinedSeurat[[key]], project = key, min.cells = 1, min.features = 1)
+    print(listMSICombinedSeurat[[key]])
+}
+#mergedSeuratObjList<-list()
+# seuratMSIObj <- merge(listMSICombinedSeurat[[1]],
+#                                tail(listMSICombinedSeurat, n=length(listMSICombinedSeurat)-1),
+#                                project = "MSI_both")
+```
+
+```{r prepare and integrate}
+
+
+seuratObjList <- lapply(X = listMSICombinedSeurat, FUN = SCTransform, method = "glmGamPoi", vars.to.regress = c( "nCount_RNA", "nFeature_RNA"), verbose = TRUE)
+
+features <- SelectIntegrationFeatures(object.list = seuratObjList, nfeatures = 300)
+seuratObjList <- PrepSCTIntegration(object.list = seuratObjList, anchor.features = features)
+
+msi.anchors <- FindIntegrationAnchors(object.list = seuratObjList, normalization.method = "SCT",
+                                         anchor.features = features)
+
+
+integrated_msi <- IntegrateData(anchorset = msi.anchors, normalization.method = "SCT")#, features.to.integrate = all.feature)
+
+nrow(integrated_msi[["integrated"]]@scale.data)
+
+integrated_msi <- RunPCA(integrated_msi)
+
+start_from_pc <- 1
+pcs_from_jackstraw<-30
+
+#cluster spots
+integrated_msi <- FindNeighbors(integrated_msi, dims = start_from_pc:pcs_from_jackstraw)
+integrated_msi <- FindClusters(integrated_msi, resolution = 0.5)
+# If you haven't installed UMAP, you can do so via reticulate::py_install(packages =
+# 'umap-learn')
+integrated_msi <- RunUMAP(integrated_msi, dims = start_from_pc:pcs_from_jackstraw)
+integrated_msi <- RunTSNE(integrated_msi, dims = start_from_pc:pcs_from_jackstraw)
+
+saveRDS(integrated_msi, paste0(save_path, "integrated_msi_dims30_res_0.5.Rds"))
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

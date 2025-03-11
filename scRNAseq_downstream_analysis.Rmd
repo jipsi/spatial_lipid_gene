@@ -1,0 +1,642 @@
+---
+title: "introduction"
+output: rmarkdown::html_vignette
+vignette: >
+  %/VignetteIndexEntry{introduction}
+  %/VignetteEngine{knitr::rmarkdown}
+  %/VignetteEncoding{UTF-8}
+---
+
+```{r, setup}
+#Load packages
+library(Seurat)
+library(SeuratObject)
+library(cowplot)
+library(dplyr)
+library(ggplot2)
+#library(AUCell)
+library(stringr)
+library(sqldf)
+#library(GSEABase)
+library(ggpubr)
+library(EnhancedVolcano)
+#library(MAST)
+library(corrplot)
+
+study<-paste0("D:/GoogleDrive/spatial_leishmania/spatial/SingleCellAnalysis/mouse/shoumit/scRNA_30032021/SD2105/SC_re_run/")
+repeat_study<-paste0("D:/GoogleDrive/spatial_leishmania/spatial/SingleCellAnalysis/mouse/shoumit/scRNA_27052021/SD2705/")
+#study<-"D:/large_downloads/raw_feature_bc_matrix.h5"
+output_integrated<-paste0("D:/GoogleDrive/spatial_leishmania/spatial/_EXPERIMENTS/SD22.8.4_MM2105_SD2705_scRNA_re_analysis/R/")
+
+save_on<-1
+reference_tabula_muris<-readRDS(paste0("D:/GoogleDrive/spatial_leishmania/spatial/SingleCellAnalysis/mouse/TabulaMuris/reference_tabula_muris.rds"))
+
+#set pca dimensions to use and 
+#resolution for cluster identification
+dims=15
+res=0.4
+
+#load reactome genes
+reactome_lipids<-read.csv(paste0("D:/GoogleDrive/spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/R/woI4/REACTOME_METABOLISM_OF_LIPIDSv2023.1.Mm.csv"), header = F, col.names = "gene")
+```
+
+```{r custom_functions}
+# Function to find valley between two highest peaks (positive values only)
+find_main_valley <- function(data) {
+  # Filter for positive values only
+  data <- data[data > 0]
+  
+  # Check if we have enough data after filtering
+  if(length(data) < 10) {  # arbitrary minimum, adjust as needed
+    warning("Not enough positive values in dataset")
+    return(NULL)
+  }
+  
+  # Get density estimation
+  dens <- density(data, from=0)  # start density estimation from 0
+  
+  # Find all peaks (where derivative changes from positive to negative)
+  derivative <- diff(dens$y)
+  peaks <- which(diff(sign(derivative)) == -2) + 1
+  
+  # If we have at least 2 peaks
+  if(length(peaks) >= 2) {
+    # Find the two highest peaks
+    peak_heights <- dens$y[peaks]
+    top_two_peaks <- peaks[order(peak_heights, decreasing = TRUE)[1:2]]
+    top_two_peaks <- sort(top_two_peaks)  # Sort by position, not height
+    
+    # Find valleys between these peaks
+    valleys <- which(diff(sign(derivative)) == 2) + 1
+    valley_between <- valleys[valleys > top_two_peaks[1] & 
+                                valleys < top_two_peaks[2]]
+    
+    if(length(valley_between) > 0) {
+      # If multiple valleys exist between peaks, take the deepest one
+      valley_depths <- dens$y[valley_between]
+      main_valley <- valley_between[which.min(valley_depths)]
+      
+      return(list(
+        valley_x = dens$x[main_valley],
+        density = dens,
+        peak1_x = dens$x[top_two_peaks[1]],
+        peak2_x = dens$x[top_two_peaks[2]]
+      ))
+    }
+  }
+  return(NULL)
+}
+
+# Create histogram with density and valley
+plot_with_valley <- function(data, title) {
+  # Initial check for positive values
+  data <- data[data > 0]
+  if(length(data) < 10) {
+    stop("Not enough positive values in dataset")
+  }
+  
+  # Find valley
+  result <- find_main_valley(data)
+  
+  if(!is.null(result)) {
+    # Create histogram
+    hist(data, 
+         prob = TRUE,
+         breaks = "FD",
+         col = "lightblue",
+         border = "white",
+         main = title,
+         xlab = "Value (>0)",
+         ylab = "Density",
+         xlim = c(0, max(data)))  # start x-axis at 0
+    
+    # Add density line
+    lines(result$density, 
+          col = "darkblue",
+          lwd = 2)
+    
+    # Add valley line
+    abline(v = result$valley_x,
+           col = "red",
+           lwd = 2,
+           lty = 2)
+    
+    # Add peak lines
+    abline(v = result$peak1_x,
+           col = "darkgreen",
+           lwd = 2,
+           lty = 2)
+    abline(v = result$peak2_x,
+           col = "darkgreen",
+           lwd = 2,
+           lty = 2)
+    
+    # Add labels
+    text(result$valley_x, 
+         max(result$density$y)/2,
+         sprintf("Valley\n%.2f", result$valley_x),
+         pos = 4,
+         col = "red")
+    
+    # Add grid
+    grid(lty = "dotted")
+    
+    # Add legend
+    legend("topright",
+           legend = c("Density", "Valley", "Peaks"),
+           col = c("darkblue", "red", "darkgreen"),
+           lwd = 2,
+           lty = c(1, 2, 2))
+    
+    # Print summary statistics
+    cat("Summary of positive values:\n")
+    print(summary(data))
+    cat("\nNumber of positive values:", length(data), "\n")
+    
+    return(result$valley_x)
+  } else {
+    warning("Could not find clear valley between two peaks")
+    return(NULL)
+  }
+}
+
+
+```
+
+
+```{r start_here_if_already_integrated}
+
+input_string <- paste0(output_integrated, "integrated_sd2705_","dims",dims,"_res",res,".rds")
+print(paste0("Reading file:", input_string))
+seuratObj<-readRDS(input_string)
+rm(input_string)
+
+table(seuratObj@meta.data$INF)
+table(seuratObj@meta.data$orig.ident)
+
+seuratObj <- SetIdent(seuratObj, value="CellTypeM")
+
+```
+
+```{r visualise_cells_in_low_dim}
+
+#Visualise phenotypes in low dimensional space																	
+DimPlot(seuratObj, label = TRUE, label.box = TRUE)+NoLegend()
+
+
+  DimPlot(seuratObj, reduction="pca", label = TRUE, label.box = TRUE)+NoLegend()
+    DimPlot(seuratObj, reduction="pca", label = TRUE, label.box = TRUE, group.by = "CellMeshFine")+NoLegend()
+  DimPlot(seuratObj, label = TRUE, label.box = TRUE)+NoLegend()
+  
+  pdf(paste0(output_integrated, "/phenotyping/","integrated_sd2705_","dims",dims,"_res",res,".pdf"))   
+    DimPlot(seuratObj, label = TRUE, label.box = F, group.by = "CellMeshFine", label.size = 4)+NoLegend()
+  dev.off() + NoAxes()
+  
+  DimPlot(seuratObj, reduction="tsne", label = TRUE, label.box = TRUE)+NoLegend()
+    DimPlot(seuratObj, reduction="tsne", label = TRUE, label.box = TRUE, group.by = "CellMeshFine", label.size = 4)+NoLegend()
+dev.off()
+
+
+#Visualise cluster memberships per group
+######################################################################################################################################
+#remove RBCs and hepatocytes
+reduced_seuratObj <- subset(seuratObj, subset = CellTypeM %in% c("RBCs","Hepatocytes"), invert=T)
+reduced_seuratObj@meta.data$CellMeshFine <- droplevels(reduced_seuratObj@meta.data$CellMeshFine)
+###fetch seurat cluster colours
+p <- DimPlot(reduced_seuratObj, group.by = "CellMeshFine") # Generate the tSNE plot, but save it as an object
+pbuild <- ggplot2::ggplot_build(p) # Use ggplot_build to deconstruct the ggplot object
+pdata <- pbuild$data[[1]] # Pull the data used for the plot
+pdata <-  pdata[order(pdata$group), ] # Order the plot data by group
+ucols <- unique(pdata$colour) # Get a vector of unique colors
+names(ucols) <- unique(pdata$group) # Add the groups to the vector of colors as names
+
+cells_prop_by_cluster <- prop.table(table(reduced_seuratObj$CellMeshFine, reduced_seuratObj$orig.ident), margin = 2)
+cells_prop_by_cluster
+
+pdf(paste0(output_integrated, "/phenotyping/", "ident_prop_bar_fig2b.pdf"), height = 5, width=5)
+  barplot(cells_prop_by_cluster, 
+          col=ucols , 
+          border="white", 
+          space=0.04, 
+          font.axis=2)
+dev.off()
+pdf(paste0(output_integrated, "/phenotyping/", "For_CellMeshFine_Legends.pdf"), height = 10, width=6)
+  p
+dev.off()
+#write proportion per cell type and orig.ident
+write.csv(prop.table(table(reduced_seuratObj$CellMeshFine, reduced_seuratObj$orig.ident), margin = 2), paste0(output_integrated, "/phenotyping/", "_ident_proportions_sample_no_hepato_noRBCs.csv"), row.names =TRUE)
+#rm(reduced_seuratObj)
+###################################################################
+###################################################################
+###################################################################
+
+top_features<-c("Maf","Ifng","Igkc","Ighm","Lyz2","Saa3","Fabp1","Apoc1","Gzma","Ccl5","Car3","Gsta3","Hmgb2","Hist1h2ap","Malat1","Xist","Cx3cr1","Nkg7","Tmsb4x","AW112010","Il7r","Lef1","Apoe","C1qa","Hba-a2","Hba-a1","S100a9","S100a8","Cst3","H2-Ab1","Car2","Hbb-bt","Prtn3","Mpo","Tnfrsf4","Ctla4","Bst2","Siglech","Ccl3","Mcpt8")
+pdf(paste0(output_integrated, "/phenotyping/","top_markers_integrated_sd2705_","dims",dims,"_res",res,".pdf"), width = 13)
+  DotPlot(seuratObj, features = top_features, group.by = "CellMeshFine" ) + RotatedAxis()
+dev.off()
+
+#
+
+pdf(paste0(output_integrated, "/phenotyping/inflamm_","dims",dims,"_res",res,".pdf"), width = 7, height = 6)
+  DotPlot(seuratObj, features = c("Ifng","Tnf","Nos2","Il10","Il4","Tgfb1","Tgfb2","Tgfb3"), group.by = "CellMeshFine" ) + RotatedAxis()
+dev.off()
+
+pdf(paste0(output_integrated, "/phenotyping/macrophages_canonical.pdf"), width = 3, height = 6)
+  Idents(seuratObj) <- "CellMeshFine"
+  DotPlot(seuratObj, features = c("Adgre1","Clec4f","Marco","Ccr2","Ly6c2","Itgam","Itgax")) + RotatedAxis() + xlab(label = "") + ylab(label = "") + NoLegend()
+dev.off()
+myeloid_cell_types <- c("ApoeHI_Kupffer","Lyz2hi_MoMac","Neutrophils","APCs","Neutrophils/Mono","Mast","pre-cDCs")
+pdf(paste0(output_integrated, "/phenotyping/macrophages_activation_dot.pdf"), width = 4, height = 3)
+  Idents(seuratObj) <- "CellMeshFine"
+  DotPlot(seuratObj, features = c("Tnf","Nos2","Il6","Cxcl9","Il10","Tlr2","Cd86"), idents =myeloid_cell_types )+ xlab(label = "") + ylab(label = "") + NoLegend()
+dev.off()
+pdf(paste0(output_integrated, "/phenotyping/macrophages_activation_vln.pdf"), width = 4, height = 3)
+  Idents(seuratObj) <- "CellMeshFine"
+  VlnPlot(seuratObj, features = c("Tnf","Nos2","Il6","Cxcl9","Il10","Tlr2","Cd86"), stack = T, idents =myeloid_cell_types ) + xlab(label = "") + ylab(label = "") + NoLegend()
+dev.off()
+
+```
+
+```{r volcano plot comparing macrophages}
+Idents(seuratObj) <- "CellMeshFine"
+infected_cells_only <- subset(seuratObj, subset = INF == "infected")
+kupfferVsMoMacs <- FindMarkers(infected_cells_only, ident.1 = "ApoeHI_Kupffer", ident.2 = "Lyz2hi_MoMac", test.use = "MAST", assay = "RNA")
+#save marker genes
+write.csv(kupfferVsMoMacs, paste0(output_integrated, "/phenotyping/kupfferVsMoMacsIn_Infection.csv"), row.names = TRUE)
+#read marker genes
+kupfferVsMoMacs <- read.csv(paste0(output_integrated, "/phenotyping/kupfferVsMoMacsIn_Infection.csv"), header = TRUE)
+#define a dataframe for volcano plot  
+df <- kupfferVsMoMacs
+#df$gene <- rownames(df)
+df$p_val <- NULL
+#reformat column names
+colnames(df) <- c("gene","log2FoldChange","pct1","pct2","pvalue")
+#setting a very small number in lieu of zero p-value
+df$pvalue[df$pvalue==0]<-5e-305
+#adding gene names as rownames 
+rownames(df) <- df$gene
+
+#Plotting figure 2E
+pdf(paste0(output_integrated, "/phenotyping/Fig2E.pdf"), height = 5, width = 8)
+      print(EnhancedVolcano(df,
+                      lab = rownames(df),
+                      x = 'log2FoldChange',
+                      xlim = c(-3.3, 5.3),
+                      ylim = c(0,350),
+                      y = 'pvalue',
+                      title = "kupfferVsMoMacs",
+                      pCutoff = 10e-5,
+                      FCcutoff = 2,
+                      pointSize = 1,
+                      labSize = 5, 
+                      subtitle = "",
+                      drawConnectors = TRUE,
+                      widthConnectors = 0.25)
+  )
+dev.off()
+```
+
+```{r for_figure4}
+#FIGURE 3 FOR YMP co-analysis paper
+acyl_chain_remodelling_genes<-c("Lpcat1","Lpcat2","Lpcat3","Lpcat4","Mboat2","Pla2g10","Pla2g12a","Pla2g1b","Pla2g2a","Pla2g2d","Pla2g2e","Pla2g2f","Pla2g3","Pla2g4a","Pla2g4b","Pla2g4c","Pla2g4d","Pla2g4e","Pla2g4f","Pla2g5","Pla2g6","Pla2r1","Plaat3","Plb1","Plbd1","Pnpla8","Tmem86b","Pla2g15","Pla2g7")
+lpcat2_remodelling<-c("Lpcat2","Pla2g4a","Pla2g15","Pla2g7")
+cytokines=c("Tnf","Nos2","Il6","Il1b","Cd86","Tlr2")
+anti_inflamm_cytokines=c("Il10","Tgfb1","Arg1","Il4")
+seuratObj_woRBCs <- subset(seuratObj, subset = CellTypeM %in% c("RBCs","Hepatocytes"), invert=T)
+seuratObj_woRBCs=AddModuleScore(seuratObj_woRBCs,features=list(acyl_chain_remodelling_genes), name="PC_remodelling_score")
+seuratObj_woRBCs=AddModuleScore(seuratObj_woRBCs,features=list(cytokines), name="Kill_score")
+seuratObj_woRBCs=AddModuleScore(seuratObj_woRBCs,features=list(anti_inflamm_cytokines), name="Anti_inflamm_score")
+seuratObj_woRBCs=AddModuleScore(seuratObj_woRBCs,features=list(lpcat2_remodelling), name="LPCAT2_remodelling_score")
+
+###########
+###########
+data <- seuratObj_woRBCs$LPCAT2_remodelling_score1
+# Create the plot
+pdf(paste0(output_integrated,"LPCAT2_remodelling_score_histogram.pdf"), width=10, height=7)  # 
+  # Create plot and get valley point
+  valley_point <- plot_with_valley(data, "LPCAT2-Phospholipid Re-modelling Score")
+
+dev.off()
+# Print valley point
+if(!is.null(valley_point)) {
+  cat("Valley point between highest peaks:", round(valley_point, 2), "\n")
+}
+###########
+###########
+pdf(paste0(output_integrated,"acyl_chain_remodelling_in_single_cells_wHepatocytes.pdf"), height = 5, width = 7)
+  DotPlot(seuratObj, assay = "SCT", features = acyl_chain_remodelling_genes, group.by = "CellMeshFine") + RotatedAxis() + ylab(label = "") + xlab(label = "")
+dev.off()
+pdf(paste0(output_integrated,"acyl_chain_remodelling_in_single_cells.pdf"), height = 5, width = 7)
+  DotPlot(seuratObj_woRBCs, assay = "SCT", features = acyl_chain_remodelling_genes, group.by = "CellMeshFine") + RotatedAxis() + ylab(label = "") + xlab(label = "")
+  VlnPlot(seuratObj_woRBCs,features=c("PC_remodelling_score1"), group.by = "CellMeshFine", cols = c(rep("grey",18))) + NoLegend()
+  VlnPlot(seuratObj_woRBCs,features=c("Lpcat2"), group.by = "CellMeshFine", cols = c(rep("grey",18))) + NoLegend()
+  VlnPlot(seuratObj_woRBCs,features=c("LPCAT2_remodelling_score1"), group.by = "CellMeshFine", cols = c(rep("grey",18))) + NoLegend() +  geom_hline(yintercept = round(valley_point, 2),color="maroon", linetype="dashed") 
+  VlnPlot(seuratObj_woRBCs,features=c("Kill_score1"), group.by = "CellMeshFine", cols = c(rep("grey",18))) + NoLegend()
+dev.off()
+#FeaturePlot(seuratObj_woRBCs,features=c(lpcat2_genes))
+#########What is the gene expression of LPCAT2 remodelling high score myeloid cells
+myeloid_only_woRBCs <- subset(seuratObj_woRBCs, subset = CellMeshFine %in% c("ApoeHI_Kupffer","Lyz2hi_MoMac","Neutrophils"))
+myeloid_only_woRBCs$LPCAT2_remodelling_score_HiLo <- "low"
+myeloid_only_woRBCs$LPCAT2_remodelling_score_HiLo[myeloid_only_woRBCs$LPCAT2_remodelling_score1 >= 0.2] <- "high"
+myeloid_only_woRBCs@meta.data$CellMeshFine <- droplevels(myeloid_only_woRBCs@meta.data$CellMeshFine)
+split_hi_lo<-data.frame(table(myeloid_only_woRBCs$LPCAT2_remodelling_score_HiLo, myeloid_only_woRBCs$CellMeshFine))
+#Featurescatter
+# Create a list of the gene signatures for labeling
+pro_inflamm_genes <- "Score based on: Tnf, Nos2, Il6, Il1b, Cd86, Tlr2"
+anti_inflamm_genes <- "Score based on: Il10, Tgfb1, Arg1, Il4"
+
+# Get unique cell types
+cell_types <- unique(myeloid_only_woRBCs$CellMeshFine)
+
+# Create a list to store plots
+plots_list <- list()
+
+# Loop through cell types
+for(cell in cell_types) {
+    # Subset data for each cell type
+    cell_data <- subset(myeloid_only_woRBCs, CellMeshFine == cell)
+    
+    # Calculate correlations and p-values
+    pro_cor <- cor.test(cell_data$LPCAT2_remodelling_score1, 
+                       cell_data$Kill_score1, 
+                       method = "spearman")
+    
+    anti_cor <- cor.test(cell_data$LPCAT2_remodelling_score1, 
+                        cell_data$Anti_inflamm_score1, 
+                        method = "spearman")
+    
+    # Create pro-inflammatory plot
+    kill <- FeatureScatter(cell_data, 
+                          feature1 = "LPCAT2_remodelling_score1", 
+                          feature2 = "Kill_score1") + 
+            NoLegend() +
+            geom_point(color = "grey") +
+            labs(x = "LPCAT2 remodelling score",
+                 y = "Pro-inflamm. score") +
+            annotate("text", x = min(cell_data$LPCAT2_remodelling_score1), 
+                    y = max(cell_data$Kill_score1),
+                    label = paste0(pro_inflamm_genes," for ", cell),
+                    hjust = 0, vjust = 1,
+                    size = 3) +
+            annotate("text", 
+                    x = max(cell_data$LPCAT2_remodelling_score1),
+                    y = min(cell_data$Kill_score1),
+                    label = sprintf("rho = %.2f\np = %.2e", 
+                                  pro_cor$estimate,
+                                  pro_cor$p.value),
+                    hjust = 1, vjust = 0,
+                    size = 3)
+
+    # Create anti-inflammatory plot
+    anti_inflamm <- FeatureScatter(cell_data, 
+                                  feature1 = "LPCAT2_remodelling_score1", 
+                                  feature2 = "Anti_inflamm_score1") + 
+                    NoLegend() +
+                    geom_point(color = "grey") +
+                    labs(x = "LPCAT2 remodelling score",
+                         y = "Anti-inflamm. score") +
+                    annotate("text", x = min(cell_data$LPCAT2_remodelling_score1), 
+                            y = max(cell_data$Anti_inflamm_score1),
+                            label = paste0(anti_inflamm_genes," for ", cell),
+                            hjust = 0, vjust = 1,
+                            size = 3) +
+                    annotate("text", 
+                            x = max(cell_data$LPCAT2_remodelling_score1),
+                            y = min(cell_data$Anti_inflamm_score1),
+                            label = sprintf("rho = %.2f\np = %.2e", 
+                                          anti_cor$estimate,
+                                          anti_cor$p.value),
+                            hjust = 1, vjust = 0,
+                            size = 3)
+    
+    # Combine plots for each cell type
+    combined <- kill + anti_inflamm
+    plots_list[[cell]] <- combined
+    
+    inflamm_data <- cell_data@meta.data[, c("LPCAT2_remodelling_score1", "Anti_inflamm_score1", "Kill_score1")]
+    # Calculate correlation matrix
+    inflamm_data_corr <- cor(inflamm_data, method = "spearman")
+    print(paste0("Running correlations for - ", cell))
+    print(inflamm_data_corr)
+    # Calculate significance
+    inflamm_data_p <- cor.mtest(inflamm_data)$p
+    print(inflamm_data_p)
+    print("--------------------------------------")
+    # Create correlation plot
+    pdf(paste0(output_integrated,cell, "inflamm_anti_inflamm_correlations.pdf"), height = 6, width = 6)
+      print(corrplot(inflamm_data_corr, 
+             type = "upper",
+             p.mat = inflamm_data_p, 
+             sig.level = 0.05,
+             insig = "blank",
+             tl.col = "black",
+             col = colorRampPalette(c("navy", "white", "firebrick3"))(100)))
+    dev.off()
+}
+
+# Set up PDF
+pdf(paste0(output_integrated,"LPCAT2_remodelling_correlation_activation_by_celltype.pdf"), 
+    height = 12, 
+    width = 8)
+  # Arrange all plots in a grid
+  patchwork::wrap_plots(plots_list, ncol = 1)
+dev.off() 
+
+pdf(paste0(output_integrated,"LPCAT2_remodelling_score_HiLo_cell_counts.pdf"), height = 5, width = 3)
+  # Plot the data
+  ggplot(split_hi_lo, aes(x = Var2, y = Freq, fill = Var1)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    labs(title = "", x = "Cell Type", y = "Count") +
+    theme_minimal() +
+    scale_fill_manual(values = c("high" = "maroon", "low" = "grey")) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),panel.grid.major = element_blank(),panel.grid.minor = element_blank())
+dev.off()
+#infection versus
+pdf(paste0(output_integrated,"LPCAT2_remodelling_score_infection_versus_naive.pdf"), height = 5, width = 3)
+  VlnPlot(myeloid_only_woRBCs, features = "LPCAT2_remodelling_score1", group.by = "INF", cols = c("grey","grey")) + geom_hline(yintercept = 0.2)
+dev.off()
+#find markers
+myeloid_only_woRBCs <- SetIdent(myeloid_only_woRBCs, value = "LPCAT2_remodelling_score_HiLo")
+lpcat2_remodelling_hi <- FindMarkers(myeloid_only_woRBCs, ident.1 = "high", ident.2 = "low", test.use = "MAST", assay = "RNA")
+#save marker genes
+write.csv(lpcat2_remodelling_hi, paste0(output_integrated, "/phenotyping/lpcat2_remodelling_hi_myeloid.csv"), row.names = TRUE)
+#read marker genes
+lpcat2_remodelling_hi <- read.csv(paste0(output_integrated, "/phenotyping/lpcat2_remodelling_hi_myeloid.csv"), header = TRUE)
+#define a dataframe for volcano plot  
+df <- lpcat2_remodelling_hi
+#df$gene <- rownames(df)
+df$p_val <- NULL
+#reformat column names
+colnames(df) <- c("gene","log2FoldChange","pct1","pct2","pvalue")
+#setting a very small number in lieu of zero p-value
+df$pvalue[df$pvalue==0]<-5e-305
+#adding gene names as rownames 
+rownames(df) <- df$gene
+
+#Plotting figure 2E
+pdf(paste0(output_integrated, "/phenotyping/Fig3H.pdf"), height = 13, width = 8)
+      print(EnhancedVolcano(df,
+                      lab = rownames(df),
+                      x = 'log2FoldChange',
+                      xlim = c(-4.3, 2.2),
+                      ylim = c(0,400),
+                      y = 'pvalue',
+                      title = "lpcat2_remodelling_hi",
+                      pCutoff = 10e-5,
+                      FCcutoff = 1.0,
+                      pointSize = 1,
+                      labSize = 5, 
+                      subtitle = "",
+                      drawConnectors = TRUE,
+                      widthConnectors = 0.25)
+  )
+dev.off()
+#plot
+
+#########
+
+
+#FIGURE 4 FOR YMP co-analysis paper
+lipid_intersection_insubs<-read.csv(paste0("D:/GoogleDrive/spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/R/woI4/reactome_intersection_genes_Sub01236.csv"), header = T)
+pdf(paste0(output_integrated,"reactome_intersection_genes_Sub01236_in_single_cells.pdf"), height = 4, width = 9)
+  DotPlot(seuratObj, assay = "SCT", features = sort(lipid_intersection_insubs$Intersect), group.by = "CellMeshFine") + RotatedAxis() + ylab(label = "") + xlab(label = "")
+dev.off()
+
+x<-c("Ppt1","Pik3cd","Esyt1","Pla2g15","Acot9","Akr1b3","Ran","Aldh3b1","Gltp")
+DotPlot(seuratObj, assay = "SCT", features = sort(x), group.by = "CellMeshFine") + RotatedAxis() + ylab(label = "") + xlab(label = "")
+
+
+#subset parenchyma and blood cells for futher analysis
+seuratObj <- subset(seuratObj, idents = c("RBCs","Hepatocytes"), invert = TRUE)
+
+seuratObj$CellTypeM <- droplevels(seuratObj$CellTypeM)
+table(seuratObj$CellTypeM)
+
+celltypes <- c("T cells", "B cells", "Macrophages","Prolif. cells", "Stem-like", "NK cells","Neutrophils", "Neutrophils/Mono","Mast")
+Idents(seuratObj) <- factor(x = Idents(seuratObj), levels = celltypes)
+cell_colours_mesh <- c("brown4","plum3","goldenrod1","forestgreen","darkgreen","aquamarine4","darkblue","honeydew3","yellowgreen","yellow3","lightcoral","cornflowerblue","cyan4","hotpink3","khaki2","orangered")
+cell_colours <- c("#CD9600","#E68613","#00BE67","#00C19A","#00BFC4","#00B8E7","#00A9FF","#8494FF","#ABA300")
+        
+DimPlot(seuratObj, reduction="pca", label = TRUE, label.box = TRUE, cols = cell_colours)+NoLegend()
+DimPlot(seuratObj, label = TRUE, label.box = TRUE, cols = cell_colours)+NoLegend()
+DimPlot(seuratObj, reduction="tsne", label = TRUE, label.box = TRUE, cols = cell_colours)+NoLegend()
+
+pdf(paste0(output_integrated, "/low_dim_visual/","integrated_sd2705_","dims",dims,"_res",res,".pdf"))
+  DimPlot(seuratObj, reduction="pca", label = TRUE, label.box = TRUE, cols = cell_colours)+NoLegend()
+  DimPlot(seuratObj, label = TRUE, label.box = TRUE, cols = cell_colours)+NoLegend()
+  DimPlot(seuratObj, reduction="tsne", label = TRUE, label.box = TRUE, cols = cell_colours)+NoLegend()
+dev.off()
+
+Idents(seuratObj)<-"INF"
+small_Seurat <- subset(seuratObj, downsample = 3500)
+Idents(seuratObj)<-"CellTypeM"
+Idents(small_Seurat)<-"CellTypeM"
+
+
+```
+
+```{r prepare_for_correlation}
+#subset myeloid cells
+test_obj_str<-"myeloid_only_woRBCs"
+test_obj<-list()
+test_obj[[test_obj_str]]<-myeloid_only_woRBCs
+```
+
+
+```{r correlations, warning=FALSE}
+
+######
+#function correlation
+######
+fn_get_corr_mat <- function(obj, gene_name){
+  correlation_df_list<-list()
+
+
+  mat_count<-as.matrix(obj[['SCT']]@data)
+
+  #search correlations for first lincRNA only - hardcoded atm
+  #gene_name<-X[1]
+  type<-"spearman"
+
+  #get 'gene of interest' expression of all cells
+  count_gene<-mat_count[gene_name,]
+
+  correlation_mat<-matrix(nrow = dim(mat_count)[1], ncol = 2)
+  #add rownames
+  rownames(correlation_mat) <- rownames(mat_count)
+  # Create a nested loop
+  for(row in 1:nrow(mat_count)) {
+    correlation<-stats::cor.test(count_gene, mat_count[row,], method = type)
+    correlation_mat[row,1]<-correlation$estimate
+    correlation_mat[row,2]<-correlation$p.value
+  }
+  correlation_mat<-as.data.frame(correlation_mat)
+  colnames(correlation_mat)<-c("corr_estimate","pvalue")
+  correlation_mat$gene<-rownames(correlation_mat)
+  #discard pvalues greater than 0.05 and correlations below 0.1
+  correlation_df<-sqldf::sqldf("SELECT gene, corr_estimate, pvalue
+                                FROM correlation_mat
+                                WHERE pvalue < 0.05
+                                AND corr_estimate > 0.1
+                                ORDER BY corr_estimate DESC")
+
+  anti_correlation_df<-sqldf::sqldf("SELECT gene, corr_estimate, pvalue
+                                FROM correlation_mat
+                                WHERE pvalue < 0.05
+                                AND corr_estimate < -0.1
+                                ORDER BY corr_estimate ASC")
+  #write.table(correlation_mat, file = paste0(exp_path, "All_CD8_T_PBMC_Malat1_Vs_allGene_flu_corr.csv"), sep=",")
+  correlation_df_list[[paste0("corr_", gene_name)]]<-correlation_df
+  correlation_df_list[[paste0("acorr_", gene_name)]]<-anti_correlation_df
+  list_corr_mat <- correlation_df_list
+  return(list_corr_mat)
+}
+
+gene_name<-"Lpcat2"
+
+# Start the clock!
+ptm <- proc.time()
+
+list_corr_mat<-fn_get_corr_mat(test_obj[[test_obj_str]], gene_name)
+
+# Stop the clock
+time_taken<- proc.time() - ptm
+
+print(paste0("Time elapsed: ", sprintf((time_taken[3]/60), fmt = '%#.2f')," minutes"))
+
+head(list_corr_mat[[paste0("corr_", gene_name)]],20)
+head(list_corr_mat[[paste0("acorr_", gene_name)]],20)
+
+write.table(list_corr_mat[[paste0("corr_", gene_name)]], file = paste0(output_integrated,"corr_",test_obj_str,"_",gene_name,".csv"), sep=",", row.names = FALSE)
+
+write.table(list_corr_mat[[paste0("acorr_", gene_name)]], file = paste0(output_integrated, "acorr_",test_obj_str,"_",gene_name,".csv"), sep=",", row.names = FALSE)
+
+rm(list_corr_mat)
+```
+
+```{r plot_myeloid_lpcat2_corr}
+test_obj_str<-"myeloid_only_woRBCs"
+lpcat2_corr <- read.csv(paste0(output_integrated,"corr_",test_obj_str,"_",gene_name,".csv"), header = TRUE)
+#select all genes with correlation > third quantile
+lpcat2_corr<-lpcat2_corr[lpcat2_corr$corr_estimate > quantile(lpcat2_corr$corr_estimate, 0.95),]
+# Order the data by correlation value
+lpcat2_corr <- lpcat2_corr[order(-lpcat2_corr$corr_estimate), ]
+# Convert gene to factor to maintain order in plot
+lpcat2_corr$gene <- factor(lpcat2_corr$gene, levels = lpcat2_corr$gene)
+#remove the row with Lpcat2 as gene name
+lpcat2_corr<-lpcat2_corr[lpcat2_corr$gene != gene_name,]
+#plot correlations as a bar graph with gene names as a sorted factor
+
+pdf(paste0(output_integrated, "/","lpcat2_corr_bar_",test_obj_str,"_Fig2.pdf"), width = 2, height = 4)
+  ggplot(lpcat2_corr, aes(x = gene, y = corr_estimate)) +
+    geom_bar(stat = "identity", fill = "#4299E1") +
+    coord_flip() +  # Flip coordinates to make horizontal bars
+    theme_minimal() +
+    labs(
+      title = "Lpcat2 correlated genes - top 5%",
+      x = "",
+      y = "Correlation (Spearman's)"
+    ) #+ #remove grid
+    #theme(axis.text.x = element_text(angle = 45, hjust = 1),panel.grid.major = element_blank(),panel.grid.minor = element_blank())
+dev.off()
+```

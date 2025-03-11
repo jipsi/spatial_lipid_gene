@@ -1,0 +1,228 @@
+---
+title: "introduction"
+output: rmarkdown::html_vignette
+vignette: >
+  %/VignetteIndexEntry{introduction}
+  %/VignetteEngine{knitr::rmarkdown}
+  %/VignetteEncoding{UTF-8}
+---
+
+```{r, setup}
+#Load packages
+library(Seurat)
+library(SeuratObject)
+library(cowplot)
+library(dplyr)
+library(ggplot2)
+#library(AUCell)
+library(stringr)
+library(sqldf)
+#library(GSEABase)
+library(ggpubr)
+library(EnhancedVolcano)
+#library(MAST)
+library(corrplot)
+
+study<-paste0("D:/GoogleDrive/spatial_leishmania/spatial/SingleCellAnalysis/mouse/shoumit/scRNA_30032021/SD2105/SC_re_run/")
+repeat_study<-paste0("D:/GoogleDrive/spatial_leishmania/spatial/SingleCellAnalysis/mouse/shoumit/scRNA_27052021/SD2705/")
+#study<-"D:/large_downloads/raw_feature_bc_matrix.h5"
+output_integrated<-paste0("D:/GoogleDrive/spatial_leishmania/spatial/_EXPERIMENTS/SD22.8.4_MM2105_SD2705_scRNA_re_analysis/R/")
+
+save_on<-1
+reference_tabula_muris<-readRDS(paste0("D:/GoogleDrive/spatial_leishmania/spatial/SingleCellAnalysis/mouse/TabulaMuris/reference_tabula_muris.rds"))
+
+#set pca dimensions to use and 
+#resolution for cluster identification
+dims=15
+res=0.4
+
+#load reactome genes
+reactome_lipids<-read.csv(paste0("D:/GoogleDrive/spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/R/woI4/REACTOME_METABOLISM_OF_LIPIDSv2023.1.Mm.csv"), header = F, col.names = "gene")
+```
+
+Load/create Seurat Object - Change this subsequently to expression matrix and build stats for generic usage
+
+```{r loadSeurath5}
+
+seuratObj_SNp1<-Read10X_h5(filename =paste0(study,"SN_filtered_feature_bc_matrix.h5"))
+seuratObj_SC1<-Read10X_h5(filename =paste0(study,"SC1_filtered_feature_bc_matrix.h5"))
+seuratObj_SC2<-Read10X_h5(filename =paste0(study,"SC2_filtered_feature_bc_matrix.h5"))
+seuratObj_SC4<-Read10X_h5(filename =paste0(study,"SC4_filtered_feature_bc_matrix.h5"))
+
+seuratObj_SNp2<-Read10X_h5(filename =paste0(repeat_study,"SNp_filtered_feature_bc_matrix.h5"))
+seuratObj_SI3<-Read10X_h5(filename =paste0(repeat_study,"SI3_filtered_feature_bc_matrix.h5"))
+seuratObj_SI4<-Read10X_h5(filename =paste0(repeat_study,"SI4_filtered_feature_bc_matrix.h5"))
+seuratObj_SI5<-Read10X_h5(filename =paste0(repeat_study,"SI5_filtered_feature_bc_matrix.h5"))
+
+#seuratObj<-Read10X_h5((filename = study))
+seuratObj_SNp1 <- CreateSeuratObject(counts = seuratObj_SNp1, min.cells = 3, min.features = 200, project = "SNp1")
+seuratObj_SC1 <- CreateSeuratObject(counts = seuratObj_SC1, min.cells = 3, min.features = 200, project = "SC1")
+seuratObj_SC2 <- CreateSeuratObject(counts = seuratObj_SC2, min.cells = 3, min.features = 200, project = "SC2")
+seuratObj_SC4 <- CreateSeuratObject(counts = seuratObj_SC4, min.cells = 3, min.features = 200, project = "SC4")
+
+seuratObj_SNp2 <- CreateSeuratObject(counts = seuratObj_SNp2, min.cells = 3, min.features = 200, project = "SNp2")
+seuratObj_SI3 <- CreateSeuratObject(counts = seuratObj_SI3, min.cells = 3, min.features = 200, project = "SI3")
+seuratObj_SI4 <- CreateSeuratObject(counts = seuratObj_SI4, min.cells = 3, min.features = 200, project = "SI4")
+seuratObj_SI5 <- CreateSeuratObject(counts = seuratObj_SI5, min.cells = 3, min.features = 200, project = "SI5")
+
+```
+
+```{r integrate_list}
+seuratObjList<-list()
+#30032021
+seuratObjList[["SNp1"]]<-seuratObj_SNp1
+seuratObjList[["SNp1"]]<-RenameCells(seuratObjList[["SNp1"]], add.cell.id = "SNp1", for.merge = FALSE)
+#27052021
+seuratObjList[["SNp2"]]<-seuratObj_SNp2
+seuratObjList[["SNp2"]]<-RenameCells(seuratObjList[["SNp2"]], add.cell.id = "SNp2", for.merge = FALSE)
+#30032021
+seuratObjList[["SC1"]]<-seuratObj_SC1
+seuratObjList[["SC1"]]<-RenameCells(seuratObjList[["SC1"]], add.cell.id = "SC1", for.merge = FALSE)
+
+seuratObjList[["SC2"]]<-seuratObj_SC2
+seuratObjList[["SC2"]]<-RenameCells(seuratObjList[["SC2"]], add.cell.id = "SC2", for.merge = FALSE)
+
+seuratObjList[["SC4"]]<-seuratObj_SC4
+seuratObjList[["SC4"]]<-RenameCells(seuratObjList[["SC4"]], add.cell.id = "SC4", for.merge = FALSE)
+
+#27052021
+seuratObjList[["SI3"]]<-seuratObj_SI3
+seuratObjList[["SI3"]]<-RenameCells(seuratObjList[["SI3"]], add.cell.id = "SI3", for.merge = FALSE)
+
+seuratObjList[["SI4"]]<-seuratObj_SI4
+seuratObjList[["SI4"]]<-RenameCells(seuratObjList[["SI4"]], add.cell.id = "SI4", for.merge = FALSE)
+
+seuratObjList[["SI5"]]<-seuratObj_SI5
+seuratObjList[["SI5"]]<-RenameCells(seuratObjList[["SI5"]], add.cell.id = "SI5", for.merge = FALSE)
+
+#include nash dataset
+# nash_study<-"D:/GoogleDrive/spatial_leishmania/spatial/SingleCellAnalysis/mouse/GSE129516/data/"
+# seuratObjList[["gse129516"]]<-readRDS(Sys.glob(file.path(paste0(nash_study,"*.rds"))))
+# seuratObjList[["gse129516"]]<-RenameCells(seuratObjList[["gse129516"]], add.cell.id = "gse129516", for.merge = FALSE)
+
+rm(seuratObj_SNp1, seuratObj_SNp2, seuratObj_SC1, seuratObj_SC2, seuratObj_SC4, seuratObj_SI3, seuratObj_SI4, seuratObj_SI5)
+
+```
+
+```{r prepare_and_integrate}
+#perform standard preprocessing on each object
+#check gene types
+#grep(pattern = "^Ccl", x = rownames(seuratObj), value = TRUE)
+for (i in 1:length(seuratObjList)) {
+  seuratObjList[[i]]
+  #'Gm42418 ','AY036118' removed from analysis for finding markers
+  #"Genes Gm42418 and AY036118 were also removed, as they overlap the rRNA element Rn45s and represent rRNA contamination"
+  #Source:https://www.nature.com/articles/s41467-021-27035-8
+  counts <- GetAssayData(seuratObjList[[i]], assay = "RNA")
+  counts <- counts[-(which(rownames(counts) %in% c('Gm42418','AY036118'))),]
+  seuratObjList[[i]] <- subset(seuratObjList[[i]], features = rownames(counts))
+  seuratObjList[[i]] <- PercentageFeatureSet(seuratObjList[[i]], pattern = "^mt-", col.name = "percent.mt")
+  seuratObjList[[i]] <- subset(seuratObjList[[i]], subset = percent.mt < 10)
+  seuratObjList[[i]] <- PercentageFeatureSet(seuratObjList[[i]], pattern = "^Rps", col.name = "percent.rps")
+  seuratObjList[[i]] <- PercentageFeatureSet(seuratObjList[[i]], pattern = "^Rpl", col.name = "percent.rpl")
+
+}
+
+
+seuratObjList <- lapply(X = seuratObjList, FUN = SCTransform, method = "glmGamPoi", vars.to.regress = c("percent.mt", "percent.rps", "percent.rpl", "nCount_RNA", "nFeature_RNA"), verbose = TRUE)
+
+features <- SelectIntegrationFeatures(object.list = seuratObjList, nfeatures = 3000)
+seuratObjList <- PrepSCTIntegration(object.list = seuratObjList, anchor.features = features)
+
+immune.anchors <- FindIntegrationAnchors(object.list = seuratObjList, normalization.method = "SCT",
+                                         anchor.features = features)
+
+integrated_sctransformed <- IntegrateData(anchorset = immune.anchors, normalization.method = "SCT")#, features.to.integrate = all.feature)
+
+nrow(integrated_sctransformed[["integrated"]]@scale.data)
+
+integrated_sctransformed$INF <- ifelse(test = integrated_sctransformed$orig.ident %in% c("SNp1","SNp2"), yes = "naive", no = "infected")
+
+```
+
+run pca and clustering
+
+```{r pca_and_louvain_cluster}
+
+#number_of_features<-2000
+integrated_sctransformed <- RunPCA(integrated_sctransformed, verbose = FALSE)
+ElbowPlot(integrated_sctransformed)
+integrated_sctransformed <- FindNeighbors(integrated_sctransformed, reduction = "pca", dims = 1:dims)
+integrated_sctransformed <- FindClusters(integrated_sctransformed, verbose = FALSE, resolution=res)
+integrated_sctransformed <- RunUMAP(integrated_sctransformed, reduction = "pca", dims = 1:dims)
+integrated_sctransformed <- RunTSNE(integrated_sctransformed, reduction = "pca", dims = 1:dims)
+
+DimPlot(integrated_sctransformed, label = TRUE, label.box = TRUE)+NoLegend()
+DimPlot(integrated_sctransformed, reduction="tsne", label = TRUE, label.box = TRUE)+NoLegend()
+
+```
+
+Find genes upregulated in inferred clusters
+
+```{r find all markers}
+
+DefaultAssay(integrated_sctransformed) <- "SCT"
+integrated_sctransformed <- SetIdent(integrated_sctransformed, value = "seurat_clusters")
+
+
+integrated_sctransformed <- PrepSCTFindMarkers(integrated_sctransformed, assay = "SCT")
+
+
+all_markers <- FindAllMarkers(integrated_sctransformed, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25, assay = "SCT")
+
+write.csv(all_markers, paste0(output_integrated, "/markers/","markers_dims",dims,"_res",res,".csv"), row.names = TRUE)
+
+all_markers <- read.csv(paste0(output_integrated, "/markers/","markers_dims",dims,"_res",res,".csv"), header = TRUE)
+
+
+seuratObj <- SetIdent(integrated_sctransformed, value = "seurat_clusters")
+all_markers %>%
+    group_by(cluster) %>%
+    top_n(n = 10, wt = avg_log2FC) -> top10
+DoHeatmap(integrated_sctransformed, features = top10$gene) + NoLegend()
+ggsave(paste0(output_integrated, "markers/heatmap.pdf"), width = 15, height = 20)
+ggsave(paste0(output_integrated, "markers/heatmap.png"), width = 15, height = 20)
+seuratObj <- SetIdent(seuratObj, value = "CellTypeM")
+
+integrated_sctransformed <- SetIdent(integrated_sctransformed, value = "seurat_clusters")
+
+```
+
+```{r label transfer and phenotyping}
+#DefaultAssay(integrated_sctransformed) <- "SCT"
+#Pass1: Top 100 genes on CellMesh (https://uncurl.cs.washington.edu/db_query)
+#rename based on CellMesh
+pass1 <- "cellMesh"
+
+#manual labelling based on D:\GoogleDrive\spatial_leishmania\spatial\_EXPERIMENTS\SD22.5.3_UVB_scRNA_seq_analysis\R\sd2705only\phenotyping\MM21.08_December2021_Clustering ID_revised_SDv1_MM.xlsx
+
+integrated_sctransformed <- SetIdent(integrated_sctransformed, value = "seurat_clusters")
+integrated_sctransformed <- RenameIdents(integrated_sctransformed, `0` = "Ifng+CD4+T", `1` = "B cells", `2` = "Lyz2hi_MoMac", `3` = "Hepatocytes1", `4` = "CD8_T", `5` = "Hepatocytes2", `6` = "Prolif. cells", `7` = "Activ_CD4+_T2", `8` = "NK", `9` = "CD4_T3", `10` = "Naïve_T", `11` = "ApoeHI_Kupffer", `12` = "RBCs1", `13` = "Neutrophils", `14` = "APCs", `15` = "RBCs2", `16` = "RBCs3", `17` = "Neutrophils/Mono", `18` = "Treg", `19` = "pre-cDCs", `20` = "Mast")
+
+
+
+#Add phenotype information to metadata
+integrated_sctransformed$CellMeshFine<-Idents(integrated_sctransformed)
+
+
+integrated_sctransformed <- RenameIdents(integrated_sctransformed, `Ifng+CD4+T` = "T cells", `B cells` = "B cells", `Lyz2hi_MoMac` = "Macrophages", `Hepatocytes1` = "Hepatocytes", `CD8_T` = "T cells", `Hepatocytes2` = "Hepatocytes", `Prolif. cells` = "Prolif. cells", `Activ_CD4+_T2` = "T cells", `NK` = "NK cells", `CD4_T3` = "T cells", `Naïve_T` = "T cells", `ApoeHI_Kupffer` = "Macrophages", `RBCs1` = "RBCs", `Neutrophils` = "Neutrophils", `APCs` = "Macrophages", `RBCs2` = "RBCs", `RBCs3` = "RBCs", `Neutrophils/Mono` = "Neutrophils/Mono", `Treg` = "T cells", `pre-cDCs` = "pre-cDCs", `Mast` = "Mast")
+
+
+integrated_sctransformed$CellTypeM<-Idents(integrated_sctransformed)
+
+```
+
+```{r save_object}
+colnames(integrated_sctransformed@meta.data)
+
+
+output_string <- paste0(output_integrated, "integrated_sd2705_","dims",dims,"_res",res,".rds")
+print(paste0("Saving as:", output_string))
+saveRDS(integrated_sctransformed,output_string)
+rm(output_string)
+
+liver_platelets_sd2705 <- subset(integrated_sctransformed, subset = Ppbp>0)
+#"D:/GoogleDrive/spatial_leishmania/spatial/_EXPERIMENTS/SD22.8.4_MM2105_SD2705_scRNA_re_analysis/R/"
+saveRDS(liver_platelets_sd2705, paste0(output_integrated, "platelets_integrated_sd2705_","dims",dims,"_res",res,".rds"))
+
+```

@@ -1,0 +1,1214 @@
+---
+title: "introduction"
+output: rmarkdown::html_vignette
+vignette: >
+  %/VignetteIndexEntry{introduction}
+  %/VignetteEngine{knitr::rmarkdown}
+  %/VignetteEncoding{UTF-8}
+---
+
+```{r set up message=FALSE}
+#library(customSeuratAnalysis)
+library(Seurat)
+library(dplyr)
+library(sqldf)
+library(ggplot2)
+# library(SingleCellExperiment)
+#library(glmGamPoi)
+library(patchwork)
+library(Seurat)
+library(sqldf)
+library(dplyr)
+#library(AUCell)
+library(SingleCellExperiment)
+library(mclust)
+#library(slingshot)
+library(RColorBrewer)
+library(sqldf)
+library(ggpubr)
+#library(tradeSeq)
+
+library(data.table)
+#library(GSEABase)
+library(plotly)
+library(readxl)
+library(EnhancedVolcano)
+
+#library(GEOquery)
+
+library(spatstat)
+library(gplots)
+library(corrplot)
+library(stringr)
+
+library(VennDiagram)
+library(grid)#for printing PDFs off finder makrer
+
+library(reshape2)
+library(ggplot2)
+
+#library(slingshot)
+library(tidyr)
+#define study path
+#cell_type<-"CD8"
+
+#os preamble
+mac_preamble <- "/Volumes/Macintosh HD/Users/shoumit/shoumit.dey@york.ac.uk - Google Drive/My Drive/"
+win_preamble <- "D:/GoogleDrive/"
+
+study_name<-"ymp_d28"
+study_path<-paste0(win_preamble, "spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/")
+coregistration_path<-paste0(win_preamble, "spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/coregistration/")
+
+
+#
+all_samples <-c("334-I2","334-N2-I4","334-N3","345-I3","345-I5","345-N1","345-N4")
+sample_group <- c("inf","naive_inf","naive","inf","inf","naive","naive")
+
+
+cell2location_abundances<-read.csv(paste0(win_preamble, "spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/cell2location/cell2location_map/means_cell_abundance_w_sf_barcoded.csv"))
+rownames(cell2location_abundances)<-cell2location_abundances$spot_id
+cell2location_abundances$spot_id<-NULL
+celltypes<-colnames(cell2location_abundances)
+
+save_path<-paste0(study_path,"R/woI4/")
+save_on<-1
+```
+
+```{r customs functions}
+# Function to find valley between two highest peaks (positive values only)
+find_main_valley <- function(data) {
+  # Filter for positive values only
+  data <- data[data > 0]
+  
+  # Check if we have enough data after filtering
+  if(length(data) < 10) {  # arbitrary minimum, adjust as needed
+    warning("Not enough positive values in dataset")
+    return(NULL)
+  }
+  
+  # Get density estimation
+  dens <- density(data, from=0)  # start density estimation from 0
+  
+  # Find all peaks (where derivative changes from positive to negative)
+  derivative <- diff(dens$y)
+  peaks <- which(diff(sign(derivative)) == -2) + 1
+  
+  # If we have at least 2 peaks
+  if(length(peaks) >= 2) {
+    # Find the two highest peaks
+    peak_heights <- dens$y[peaks]
+    top_two_peaks <- peaks[order(peak_heights, decreasing = TRUE)[1:2]]
+    top_two_peaks <- sort(top_two_peaks)  # Sort by position, not height
+    
+    # Find valleys between these peaks
+    valleys <- which(diff(sign(derivative)) == 2) + 1
+    valley_between <- valleys[valleys > top_two_peaks[1] & 
+                                valleys < top_two_peaks[2]]
+    
+    if(length(valley_between) > 0) {
+      # If multiple valleys exist between peaks, take the deepest one
+      valley_depths <- dens$y[valley_between]
+      main_valley <- valley_between[which.min(valley_depths)]
+      
+      return(list(
+        valley_x = dens$x[main_valley],
+        density = dens,
+        peak1_x = dens$x[top_two_peaks[1]],
+        peak2_x = dens$x[top_two_peaks[2]]
+      ))
+    }
+  }
+  return(NULL)
+}
+
+# Create histogram with density and valley
+plot_with_valley <- function(data, title) {
+  # Initial check for positive values
+  data <- data[data > 0]
+  if(length(data) < 10) {
+    stop("Not enough positive values in dataset")
+  }
+  
+  # Find valley
+  result <- find_main_valley(data)
+  
+  if(!is.null(result)) {
+    # Create histogram
+    hist(data, 
+         prob = TRUE,
+         breaks = "FD",
+         col = "lightblue",
+         border = "white",
+         main = title,
+         xlab = "Value (>0)",
+         ylab = "Density",
+         xlim = c(0, max(data)))  # start x-axis at 0
+    
+    # Add density line
+    lines(result$density, 
+          col = "darkblue",
+          lwd = 2)
+    
+    # Add valley line
+    abline(v = result$valley_x,
+           col = "red",
+           lwd = 2,
+           lty = 2)
+    
+    # Add peak lines
+    abline(v = result$peak1_x,
+           col = "darkgreen",
+           lwd = 2,
+           lty = 2)
+    abline(v = result$peak2_x,
+           col = "darkgreen",
+           lwd = 2,
+           lty = 2)
+    
+    # Add labels
+    text(result$valley_x, 
+         max(result$density$y)/2,
+         sprintf("Valley\n%.2f", result$valley_x),
+         pos = 4,
+         col = "red")
+    
+    # Add grid
+    grid(lty = "dotted")
+    
+    # Add legend
+    legend("topright",
+           legend = c("Density", "Valley", "Peaks"),
+           col = c("darkblue", "red", "darkgreen"),
+           lwd = 2,
+           lty = c(1, 2, 2))
+    
+    # Print summary statistics
+    cat("Summary of positive values:\n")
+    print(summary(data))
+    cat("\nNumber of positive values:", length(data), "\n")
+    
+    return(result$valley_x)
+  } else {
+    warning("Could not find clear valley between two peaks")
+    return(NULL)
+  }
+}
+
+
+```
+
+
+```{r load_coreg_data}
+#LOAD COREGISTRATION DATA
+# Sys.glob(file.path(paste0("D:/GoogleDrive/spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/coregistration/",item,"/*_",item,"_positive.csv")))
+list_coreg <- list()
+list_both_coreg <- list()
+data_size <- 0
+data_list <- ""
+#infected mice
+for(item in c("I2","I3","I4","I5")){
+ for(ion_mode in c("neg", "pos")){
+       #key
+      key<-paste0(item,"_",ion_mode)
+      list_coreg[[key]] <- read.csv(paste0(win_preamble, "spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/coregistration/",item,"/",ion_mode,"/infected_",item,".csv"))
+      rownames(list_coreg[[key]])<-list_coreg[[key]]$Var1
+ }
+ key1 <- paste0(item,"_neg")
+ key2 <- paste0(item,"_pos")
+ print(list_coreg[[key1]])
+ print(list_coreg[[key2]])
+ list_both_coreg[[item]] <- dplyr::full_join(list_coreg[[key1]], list_coreg[[key2]], by = "Var1")
+ #qc check
+ print(paste0("The full join of negative ion with ",length(rownames(list_coreg[[key1]])), " entries and positive ion with ",length(rownames(list_coreg[[key2]])), " entries add up to a grand total of ",length(rownames(list_both_coreg[[item]])) ))
+ 
+ rownames(list_both_coreg[[item]])<-list_both_coreg[[item]]$Var1
+ list_both_coreg[[item]]<-list_both_coreg[[item]][, c(grep("^mz",colnames(list_both_coreg[[item]]), value = T))]
+ list_both_coreg[[item]]<-list_both_coreg[[item]] %>% mutate_all(funs(replace_na(.,0)))
+ #clean up
+ list_coreg[[key1]]<-list_coreg[[key1]][, c(grep("^mz",colnames(list_coreg[[key1]]), value = T))]
+ list_coreg[[key1]]<-list_coreg[[key1]] %>% mutate_all(funs(replace_na(.,0)))
+ #clean up
+ list_coreg[[key2]]<-list_coreg[[key2]][, c(grep("^mz",colnames(list_coreg[[key2]]), value = T))]
+ list_coreg[[key2]]<-list_coreg[[key2]] %>% mutate_all(funs(replace_na(.,0)))
+ #length of data
+ data_size <- data_size + length(rownames(list_both_coreg[[item]]))
+  #names of daya
+ data_list <- c(data_list, rownames(list_both_coreg[[item]])) 
+}
+
+
+##repeating for naive mice
+for(item in c("N1","N2","N3","N4")){
+  for(ion_mode in c("neg", "pos")){
+      #key
+      key<-paste0(item,"_",ion_mode)
+      list_coreg[[key]] <- read.csv(paste0(win_preamble, "spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/coregistration/",item,"/",ion_mode,"/naive_",item,".csv"))
+      rownames(list_coreg[[key]])<-list_coreg[[key]]$Var1
+ }
+ key1 <- paste0(item,"_neg")
+ key2 <- paste0(item,"_pos")
+ list_both_coreg[[item]] <- dplyr::full_join(list_coreg[[key1]], list_coreg[[key2]], by = "Var1")
+ 
+  #qc check
+ print(paste0("The full join of negative ion with ",length(rownames(list_coreg[[key1]])), " entries and positive ion with ",length(rownames(list_coreg[[key2]])), " entries add up to a grand total of ",length(rownames(list_both_coreg[[item]])) ))
+ 
+ rownames(list_both_coreg[[item]])<-list_both_coreg[[item]]$Var1
+ list_both_coreg[[item]]<-list_both_coreg[[item]][, c(grep("^mz",colnames(list_both_coreg[[item]]), value = T))]
+ list_both_coreg[[item]]<-list_both_coreg[[item]] %>% mutate_all(funs(replace_na(.,0))) 
+ #clean up
+ list_coreg[[key1]]<-list_coreg[[key1]][, c(grep("^mz",colnames(list_coreg[[key1]]), value = T))]
+ list_coreg[[key1]]<-list_coreg[[key1]] %>% mutate_all(funs(replace_na(.,0)))
+ #clean up
+ list_coreg[[key2]]<-list_coreg[[key2]][, c(grep("^mz",colnames(list_coreg[[key2]]), value = T))]
+ list_coreg[[key2]]<-list_coreg[[key2]] %>% mutate_all(funs(replace_na(.,0)))
+  #length of data
+ data_size <- data_size + length(rownames(list_both_coreg[[item]]))
+ #names of daya
+ data_list <- c(data_list, rownames(list_both_coreg[[item]])) 
+}
+
+print(paste0("The final number of spots for which there is lipid data is ",data_size))
+print(length(unique(data_list)))
+
+
+```
+
+```{r read_RDS_if_available}
+res=0.4
+dims=30
+integrated_d28_cohort <- readRDS(paste0(save_path, "integrated_d28_cohort_dims30_res_0.4.Rds"))
+integrated_d28_cohort <- SetIdent(integrated_d28_cohort, value = "orig.ident")
+integrated_d28_cohort$group <- droplevels(integrated_d28_cohort$group)
+res=0.5
+dims=30
+integrated_msi <- readRDS(paste0(save_path, "integrated_msi_dims30_res_0.5.Rds"))
+# integrated_d28_cohort <- subset(integrated_d28_cohort, idents=c("334-I4","334-N3","345-I3","345-N4"))
+# integrated_d28_cohort <- SetIdent(integrated_d28_cohort, value = "seurat_clusters")
+
+# DefaultAssay(integrated_d28_cohort)<-"Spatial"
+# integrated_d28_cohort<-FindVariableFeatures(integrated_d28_cohort, method="vst", nfeatures = 100)
+# top30 <- head(VariableFeatures(integrated_d28_cohort), 30)
+# plot1 <- VariableFeaturePlot(integrated_d28_cohort)
+# plot2 <- LabelPoints(plot = plot1, points = top30, repel = TRUE)
+# plot2 + NoLegend()
+
+integrated_d28_cohort@meta.data$barcodes <- rownames(integrated_d28_cohort@meta.data)
+
+DefaultAssay(integrated_d28_cohort)<-"SCT"
+
+#FeaturePlot(integrated_d28_cohort,features = "Cxcl9", reduction = "pca", pt.size = 2)
+VizDimLoadings(integrated_d28_cohort, dims = 1:2)
+```
+
+```{r add_lipid_meta_to_transcriptomic}
+integrated_msi$lipid_clusters <- integrated_msi$seurat_clusters
+
+meta_lipid_data <- integrated_msi@meta.data[, c("nFeature_RNA","lipid_clusters")]
+colnames(meta_lipid_data) <- c("nFeature_Lipid","lipid_clusters")
+lipid_data <- t(integrated_msi@assays[["RNA"]]@data)
+#integrated_d28_cohort <- AddMetaData(integrated_d28_cohort, metadata = i3_coreg_msi)
+integrated_d28_cohort <- AddMetaData(integrated_d28_cohort, metadata = meta_lipid_data)
+integrated_d28_cohort <- AddMetaData(integrated_d28_cohort, metadata = lipid_data)
+integrated_d28_cohort <- AddMetaData(integrated_d28_cohort, metadata = cell2location_abundances)
+
+integrated_d28_cohort$barcodes <- rownames(integrated_d28_cohort@meta.data)
+
+integrated_d28_cohort_wlipids <- subset(integrated_d28_cohort, subset = barcodes %in% data_list)
+#Remove NAs
+integrated_d28_cohort_wlipids <- subset(integrated_d28_cohort, subset = lipid_clusters %in% c("0","1","2","3","4","5","6","7","8"))
+
+clus_colour<-c("cyan2","darkgoldenrod","bisque1","cornflowerblue","orchid","royalblue","steelblue1","saddlebrown","darksalmon")
+lipid_clus_colour<-c("Lipid_0"="#00EEEE","Lipid_1"="#B8860B","Lipid_2"="#FFE4C4","Lipid_3"="#6495ED","Lipid_4"="#DA70D6","Lipid_5"="#4169E1","Lipid_6"="#63B8FF","Lipid_7"="#8B4513","Lipid_8"="#E9967A")
+
+rna_clus_colour<-c("RNA_0"="#FF7256","RNA_1"="#CD6600","RNA_2"="#B8860B","RNA_3"="#CAFF70","RNA_4"="#C1CDCD","RNA_5"="#00CDCD","RNA_6"="#8B8B83","RNA_7"="#8968CD","RNA_8"="#98FB98","RNA_9"="#FF1493")
+#c("coral1", "darkorange3","darkgoldenrod","darkolivegreen1","azure3","cyan3","ivory4","mediumpurple3","palegreen","deeppink")
+#
+
+integrated_d28_cohort_wlipids$seurat_clusters <-paste0("RNA_",integrated_d28_cohort_wlipids$seurat_clusters)
+integrated_d28_cohort_wlipids$lipid_clusters <- paste0("Lipid_",integrated_d28_cohort_wlipids$lipid_clusters)
+integrated_msi$seurat_clusters<-paste0("Lipid_",integrated_msi$seurat_clusters)
+```
+
+```{r plot_main}
+#####################################################################             #############SpatialDimPlots for Figure 2############################       
+#####################################################################
+pdf(paste0(save_path,"qc_plots_for_suppl_figure2_1.pdf"), height = 9, width = 6)
+  SpatialDimPlot(integrated_d28_cohort_wlipids, ncol = 2, crop = F, images=c("X334.I2","X345.I3","X345.I5","X334.N2.I4","X345.N1","X345.N4","X334.N3"))
+dev.off()
+#rna_clus_colour
+#Figure 2 Column 1 for RNA
+pdf(paste0(save_path,"spatial_dim_plots_rna_clusters_redone.pdf"), height = 6, width = 6)
+  #Change idents
+  Idents(integrated_d28_cohort_wlipids) <- "seurat_clusters"
+  #infected
+  inf_rna<-SpatialDimPlot(integrated_d28_cohort_wlipids, ncol = 1, crop = T, images=c("X334.I2"), pt.size.factor = 2.5, image.alpha = 0, stroke = 0.0, cols = rna_clus_colour)
+  inf_rna[[1]]
+  inf_rna<-SpatialDimPlot(integrated_d28_cohort_wlipids, ncol = 2, crop = T, images=c("X334.I2","X334.N2.I4","X345.I3","X345.I5"), pt.size.factor = 2, image.alpha = 0, stroke = 0.0, cols = rna_clus_colour)
+  inf_rna[[1]]
+  inf_rna[[2]]
+  inf_rna[[3]]
+  inf_rna[[4]]
+  #naive1
+  naive_rna<-SpatialDimPlot(integrated_d28_cohort_wlipids, ncol = 2, crop = T, images=c("X334.N2.I4","X345.N4"), pt.size.factor = 2, image.alpha = 0, stroke = 0.0, cols = rna_clus_colour)
+  naive_rna[[1]]
+  naive_rna[[2]]
+  #naive2
+  naive_rna2<-SpatialDimPlot(integrated_d28_cohort_wlipids, ncol = 2, crop = F, images=c("X334.N3","X345.N1"), pt.size.factor = 1, image.alpha = 0, stroke = 0.0, cols = rna_clus_colour)
+  naive_rna2[[1]]
+  naive_rna2[[2]]
+dev.off()
+#Figure 2 Column 2 for Lipid
+pdf(paste0(save_path,"spatial_dim_plots_lipid_clusters.pdf"), height = 6, width = 6)
+    #Change idents
+  Idents(integrated_d28_cohort_wlipids) <- "lipid_clusters"
+  #infected
+  inf_lipid<-SpatialDimPlot(integrated_d28_cohort_wlipids, ncol = 2, crop = T, images=c("X334.I2","X334.N2.I4","X345.I3","X345.I5"), pt.size.factor = 2, cols = lipid_clus_colour)
+  inf_lipid[[1]]
+  inf_lipid[[2]]
+  inf_lipid[[3]]
+  inf_lipid[[4]]
+  #naive1
+  naive1_lipid<-SpatialDimPlot(integrated_d28_cohort_wlipids, ncol = 2, crop = T, images=c("X334.N2.I4","X345.N4"), pt.size.factor = 2, cols = lipid_clus_colour)
+  naive1_lipid[[1]]
+  naive1_lipid[[2]]
+  #naive2
+  naive2_lipid<-SpatialDimPlot(integrated_d28_cohort_wlipids, ncol = 2, crop = F, images=c("X334.N3","X345.N1"), pt.size.factor = 1, cols = lipid_clus_colour)
+  naive2_lipid[[1]]
+  naive2_lipid[[2]]
+
+dev.off()
+pdf(paste0(save_path,"spatial_dim_plots_RNA4.pdf"), height = 6, width = 6)
+    #Change idents
+  Idents(integrated_d28_cohort_wlipids) <- "seurat_clusters"
+  for_plot_obj<-subset(integrated_d28_cohort_wlipids, subset = seurat_clusters == "RNA_4")
+  #infected
+  inf_lipid<-SpatialDimPlot(for_plot_obj, ncol = 2, crop = T, images=c("X334.I2","X334.N2.I4","X345.I3","X345.I5"), pt.size.factor = 2, image.alpha = 0.3)
+  inf_lipid[[1]]#+scale_fill_manual(values=col2hex(clus_colour))
+  inf_lipid[[2]]#+scale_fill_manual(values=col2hex(clus_colour))
+  inf_lipid[[3]]#+scale_fill_manual(values=col2hex(clus_colour))
+  inf_lipid[[4]]#+scale_fill_manual(values=col2hex(clus_colour))
+  #naive1
+  naive1_lipid<-SpatialDimPlot(for_plot_obj, ncol = 2, crop = T, images=c("X334.N2.I4","X345.N4"), pt.size.factor = 2, image.alpha = 0.3)
+  naive1_lipid[[1]]#+scale_fill_manual(values=col2hex(clus_colour))
+  naive1_lipid[[2]]#+scale_fill_manual(values=col2hex(clus_colour))
+  #naive2
+  naive2_lipid<-SpatialDimPlot(for_plot_obj, ncol = 2, crop = F, images=c("X334.N3","X345.N1"), pt.size.factor = 1, image.alpha = 0.3)
+  naive2_lipid[[1]]#+scale_fill_manual(values=col2hex(clus_colour))
+  naive2_lipid[[2]]#+scale_fill_manual(values=col2hex(clus_colour))
+  rm(for_plot_obj)
+dev.off()
+#####################################################################             #####################################################################             
+#####################################################################
+pdf(paste0(save_path,"spatial_feature_Saa3.pdf"), height = 12, width = 2)
+  SpatialFeaturePlot(integrated_d28_cohort_wlipids, ncol = 1, crop = T, features = "Saa3", images=c("X334.I2","X345.I3","X345.I5","X334.N2.I4"), pt.size.factor = 2)
+  x<-SpatialFeaturePlot(integrated_d28_cohort_wlipids, ncol = 1, crop = T, features = "Saa3", images=c("X334.N2.I4","X345.N4"), pt.size.factor = 2)
+  x + SpatialFeaturePlot(integrated_d28_cohort_wlipids, ncol = 1, crop = F, features = "Saa3", images=c("X334.N3","X345.N1"), pt.size.factor = 1)
+dev.off()
+###PC(O-36:3) or 770.60481
+pdf(paste0(save_path,"spatial_feature_mz-770-60481.pdf"), height = 12, width = 3)
+  SpatialFeaturePlot(integrated_d28_cohort_wlipids, ncol = 1, crop = T, features = "mz.770.60481", images=c("X334.I2","X345.I3","X345.I5","X334.N2.I4"), pt.size.factor = 2) 
+  x<-SpatialFeaturePlot(integrated_d28_cohort_wlipids, ncol = 1, crop = T, features = "mz.770.60481", images=c("X334.N2.I4","X345.N4"), pt.size.factor = 2)
+  x + SpatialFeaturePlot(integrated_d28_cohort_wlipids, ncol = 1, crop = F, features = "mz.770.60481", images=c("X334.N3","X345.N1"), pt.size.factor = 1)
+dev.off()
+#####################################################################             #####################################################################             
+#####################SpatialFeatures#################################
+#####################################################################             #####################################################################             
+#####################################################################
+
+#Lpcat expression
+vlnLPCAT<-VlnPlot(integrated_d28_cohort_wlipids, features = c("Lpcat1","Lpcat2"), idents = c("RNA_0","RNA_1","RNA_2","RNA_3","RNA_4","RNA_5","RNA_6","RNA_7","RNA_8"), cols = rep("grey",10))
+pdf(paste0(save_path,"top_clusters_lpcat.pdf"), height = 4, width = 2)
+  v1<- vlnLPCAT[[1]] + xlab(label = "")
+  v2<- vlnLPCAT[[2]] + xlab(label = "")
+  v1+v2
+dev.off()
+################################################################
+
+dotCells <- DotPlot(integrated_d28_cohort_wlipids, features = celltypes, group.by = "seurat_clusters", scale = T, cols = c("azure","maroon"), dot.scale = 12) + coord_flip() + ylab(label = "") + xlab(label = "") + theme(axis.text.x = element_text(angle = 45))
+
+pdf(paste0(save_path,"cell2location_abundances_transcript_clusters.pdf"), height = 6, width = 9)
+  dotCells 
+dev.off()
+
+xt<-DimPlot(integrated_d28_cohort_wlipids, reduction = "tsne",group.by = "seurat_clusters", label = T, label.box = T, pt.size = 1.5, cols = rna_clus_colour) + NoLegend() + ggtitle(label = "RNA clusters")
+xl<-DimPlot(integrated_msi, reduction = "tsne",group.by = "seurat_clusters",  label = T, label.box = T, cols = lipid_clus_colour, pt.size = 1.5) + NoLegend() + ggtitle(label = "MSI +/- clusters")
+xtl<-DimPlot(integrated_d28_cohort_wlipids, reduction = "tsne",group.by = "lipid_clusters", cols = lipid_clus_colour, pt.size = 1.5) + NoLegend() + ggtitle(label = "RNA t-SNE coloured by MSI +/- clusters")
+
+pdf(paste0(save_path,"xt_xl_xtl_transcripts_grouped_by_lipid_clusters.pdf"), height = 6, width = 15)
+  xt+xtl+xl
+dev.off()
+
+xu<-DimPlot(integrated_d28_cohort_wlipids, group.by = "seurat_clusters", label = T, label.box = T, pt.size = 1.5) + NoLegend() + ggtitle(label = "RNA clusters")
+xlu<-DimPlot(integrated_msi, group.by = "seurat_clusters",  label = T, label.box = T, cols = clus_colour, pt.size = 1.5) + NoLegend() + ggtitle(label = "MSI +/- clusters")
+xulu<-DimPlot(integrated_d28_cohort_wlipids, group.by = "lipid_clusters", cols = clus_colour, pt.size = 1.5) + NoLegend() + ggtitle(label = "RNA t-SNE coloured by MSI +/- clusters")
+
+pdf(paste0(save_path,"xu_xlu_xulu_transcripts_grouped_by_lipid_clusters.pdf"), height = 6, width = 15)
+  xu+xlu+xulu 
+dev.off()
+
+######tnf, ifng, nos2#################
+tnf_ifng_nos2 <- VlnPlot(integrated_d28_cohort_wlipids, features = c("Tnf","Ifng","Nos2"), group.by = "seurat_clusters", cols = rep("gray",10)) 
+pdf(paste0(save_path,"tnf_ifng_nos2_clusters.pdf"), height = 3, width = 9)
+  tnf_ifng_nos2 
+dev.off()
+
+proportion_by_lipid_clusters<-prop.table(table(integrated_d28_cohort_wlipids$lipid_clusters,integrated_d28_cohort_wlipids$seurat_clusters), margin = 2)
+write.csv(proportion_by_lipid_clusters, paste0(save_path, "_proportion_by_lipid_clusters.csv"), row.names =TRUE)
+proportion_by_orig.ident_rna<-prop.table(table(integrated_d28_cohort_wlipids$seurat_clusters, integrated_d28_cohort_wlipids$orig.ident), margin = 2)
+write.csv(proportion_by_orig.ident_rna, paste0(save_path, "_proportion_by_orig.ident_rna.csv"), row.names =TRUE)
+
+proportion_by_orig.ident_lipids<-prop.table(table(integrated_d28_cohort_wlipids$lipid_clusters, integrated_d28_cohort_wlipids$orig.ident), margin = 2)
+write.csv(proportion_by_orig.ident_lipids, paste0(save_path, "_proportion_by_orig.ident_lipids.csv"), row.names =TRUE)
+
+
+
+
+```
+
+```{r mz_to_species}
+identification_path <- paste0(study_path, "mz_identification/")
+all_mz<-read_excel(paste0(identification_path,"Final_Identification_All.xlsx"), sheet = 1)
+
+```
+
+```{r plot supplementary heatmaps}
+################
+###For Lipids####
+################
+
+# all_lipid_markers <- FindAllMarkers(integrated_msi, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25, assay = "RNA")
+dims=30
+res=0.5
+# write.csv(all_lipid_markers, paste0(save_path, "markers/integrated_msi_markers_dims_",dims,"_res",res,".csv"), row.names = TRUE)
+
+all_lipid_markers <- read.csv(paste0(save_path, "markers/integrated_msi_markers_dims_",dims,"_res",res,".csv"), header = TRUE)
+
+
+clus_colour<-c("cyan2","darkgoldenrod","bisque1","cornflowerblue","orchid","royalblue","steelblue1","saddlebrown","darksalmon")
+lipid_clus_colour<-c("Lipid_0"="#00EEEE","Lipid_1"="#B8860B","Lipid_2"="#FFE4C4","Lipid_3"="#6495ED","Lipid_4"="#DA70D6","Lipid_5"="#4169E1","Lipid_6"="#63B8FF","Lipid_7"="#8B4513","Lipid_8"="#E9967A")
+
+
+# First, filter the lipid markers for significant results
+significant_lipids <- all_lipid_markers[all_lipid_markers$p_val_adj < 0.05, ]
+
+# Get top 10 features per cluster based on avg_log2FC
+# Sort by cluster number first, then by avg_log2FC within each cluster
+top10_per_cluster <- significant_lipids %>%
+  group_by(cluster) %>%
+  top_n(n = 10, wt = avg_log2FC) %>%
+  arrange(cluster, desc(avg_log2FC)) %>%
+  ungroup()
+
+# Create a named vector for feature name mapping
+# Clean up the mz format to match between dataframes
+mz_clean <- gsub("-", ".", top10_per_cluster$gene)
+feature_mapping <- all_mz$identity
+names(feature_mapping) <- all_mz$mz
+
+# Create the display names vector, keeping original names if no match found
+display_names <- ifelse(!is.na(feature_mapping[mz_clean]), 
+                       feature_mapping[mz_clean], 
+                       top10_per_cluster$gene)
+names(display_names) <- top10_per_cluster$gene
+
+# Features are now already ordered by cluster and avg_log2FC from the arrange() above
+features_ordered <- top10_per_cluster$gene
+
+# Create the heatmap with custom labels
+lipid_heat <- DoHeatmap(object = integrated_msi,
+          features = features_ordered,
+          group.by = "seurat_clusters",
+          assay = "SCT",
+          slot = "scale.data",
+          group.colors = clus_colour) +
+  scale_fill_gradientn(colors = c("navy", "white", "firebrick3")) +
+  scale_y_discrete(labels = display_names[features_ordered]) +
+  theme(axis.text.y = element_text(size = 8))
+
+
+################
+###For RNA####
+################
+# Set identities to orig.ident
+Idents(integrated_d28_cohort_wlipids) <- "orig.ident"
+
+# Run PrepSCTFindMarkers
+# integrated_d28_cohort_wlipids <- PrepSCTFindMarkers(integrated_d28_cohort_wlipids, 
+#                                                    verbose = TRUE)
+
+# Reset identities back to clusters
+Idents(integrated_d28_cohort_wlipids) <- "seurat_clusters"
+
+# Now try FindAllMarkers
+# all_RNA_markers <- FindAllMarkers(integrated_d28_cohort_wlipids, 
+#                                 only.pos = TRUE, 
+#                                 min.pct = 0.25, 
+#                                 logfc.threshold = 0.25, 
+#                                 assay = "SCT")
+dims=30
+res=0.4
+# write.csv(all_RNA_markers, paste0(save_path, "markers/markers_dims_",dims,"_res",res,".csv"), row.names = TRUE)
+
+all_RNA_markers <- read.csv(paste0(save_path, "markers/markers_dims",dims,"_res",res,".csv"), header = T)
+
+rna_clus_colour<-c("RNA_0"="#FF7256","RNA_1"="#CD6600","RNA_2"="#B8860B","RNA_3"="#CAFF70","RNA_4"="#C1CDCD","RNA_5"="#00CDCD","RNA_6"="#8B8B83","RNA_7"="#8968CD","RNA_8"="#98FB98","RNA_9"="#FF1493")
+
+# Get top 10 features per cluster based on avg_log2FC
+# Sort by cluster number first, then by avg_log2FC within each cluster
+top10_RNA_per_cluster <- all_RNA_markers %>%
+  group_by(cluster) %>%
+  top_n(n = 10, wt = avg_log2FC) %>%
+  arrange(cluster, desc(avg_log2FC)) %>%
+  ungroup()
+# Create the heatmap with custom labels
+rna_heat <- DoHeatmap(object = integrated_d28_cohort_wlipids,
+          features = top10_RNA_per_cluster$gene,
+          group.by = "seurat_clusters",
+          assay = "SCT",
+          slot = "scale.data",
+          group.colors = rna_clus_colour) +
+  scale_fill_gradientn(colors = c("navy", "white", "firebrick3")) +
+  theme(axis.text.y = element_text(size = 8))
+
+
+#save rna and lipid heatmaps
+pdf(paste0(save_path,"rna_lipid_heatmap_NEW.pdf"), height = 12, width = 8)
+  print(lipid_heat)
+  print(rna_heat)
+dev.off()
+
+```
+
+
+```{r  sub-clustering}
+
+Idents(integrated_msi)<-"seurat_clusters"
+Idents(integrated_d28_cohort_wlipids)<-"seurat_clusters"
+
+rna047sub <- subset(integrated_d28_cohort_wlipids, idents=c("RNA_4","RNA_0","RNA_7"))
+
+rna047sub_sub <- rna047sub
+
+rna047sub_sub <- AddMetaData(rna047sub_sub, metadata = rna047sub@meta.data[, c("seurat_clusters","group", celltypes)])
+rna047sub_sub$top_level_cluster <- rna047sub_sub$seurat_clusters
+rna047sub_sub$seurat_clusters <- NULL
+
+
+rna047sub_sub<-SCTransform(rna047sub_sub, assay = "Spatial")
+#rna047sub_sub<-RunPCA(rna047sub_sub, assay = "Spatial", features = sub_clustering_markers)
+#rna047sub_sub <- FindVariableFeatures(rna047sub_sub, nfeatures = 2000)
+rna047sub_sub<-RunPCA(rna047sub_sub, assay = "SCT")#, features = sub_clustering_markers)
+
+rna047sub_sub@reductions$pca@stdev/sum(rna047sub_sub@reductions$pca@stdev)
+
+start_from_pc <- 1
+pcs_from_jackstraw<-5
+
+#cluster spots
+rna047sub_sub <- FindNeighbors(rna047sub_sub, dims = start_from_pc:pcs_from_jackstraw)
+rna047sub_sub <- FindClusters(rna047sub_sub, resolution = 0.3)
+rna047sub_sub <- RunUMAP(rna047sub_sub, dims = start_from_pc:pcs_from_jackstraw)
+rna047sub_sub <- RunTSNE(rna047sub_sub, dims = start_from_pc:pcs_from_jackstraw)
+
+rna047sub_sub$seurat_clusters <- paste0("Sub",rna047sub_sub$seurat_clusters)
+
+##For plotting spatial plots
+meta_rna047sub_sub <- rna047sub_sub@meta.data[, c("nFeature_Spatial","seurat_clusters")]
+colnames(meta_rna047sub_sub) <- c("nFeature_Spatial","meta_rna047sub_sub_clusters")
+meta_rna047sub_sub$nFeature_Spatial<-NULL
+#integrated_d28_cohort <- AddMetaData(integrated_d28_cohort, metadata = i3_coreg_msi)
+rna047sub <- AddMetaData(rna047sub, metadata = meta_rna047sub_sub)
+rna047sub$group <- droplevels(rna047sub$group)
+
+rna047sub_sub$group <- droplevels(rna047sub_sub$group)
+
+table(rna047sub_sub$group, rna047sub_sub$top_level_cluster)
+table(rna047sub_sub$group, rna047sub_sub$seurat_clusters)
+table(rna047sub_sub$seurat_clusters, rna047sub_sub$top_level_cluster)
+table(rna047sub_sub$seurat_clusters, rna047sub_sub$orig.ident)
+  
+#Dim plots in a chunk below; do not save plots here as need to re-colour
+
+saveRDS(rna047sub_sub, paste0(save_path,"rna047sub_sub_non_spatial.rds"))
+saveRDS(rna047sub, paste0(save_path,"rna047sub_sub_spatial.rds"))
+```
+
+
+```{r read_sub_Rds_DE_sub}
+rna047sub_sub<-readRDS(paste0(save_path,"rna047sub_sub_non_spatial.rds"))
+rna047sub<-readRDS(paste0(save_path,"rna047sub_sub_spatial.rds"))
+
+# First get the spots we want to analyze
+subset_barcodes <- rownames(rna047sub@meta.data)
+lipid047sub_sub <- subset(integrated_msi, cells = subset_barcodes)
+
+# Get the lipid data with mz names from integrated_msi_subset
+normalized_mat <- t(as.matrix(lipid047sub_sub[["RNA"]]@data))
+
+# Convert column names from mz-XXX-XXX to mz.XXX.XXX format
+colnames(normalized_mat) <- gsub("-", ".", colnames(normalized_mat))
+
+# Calculate mean expression and do the identity mapping as before
+mean_expression <- colMeans(normalized_mat)
+all_mz$mean_expression <- mean_expression[match(all_mz$mz, names(mean_expression))]
+
+# Create keep_species flag
+all_mz$keep_species <- ave(all_mz$mean_expression, all_mz$identity, 
+                          FUN = function(x) x == max(x))
+
+# Filter to keep highest intensity ion per identity
+all_mz_filtered <- subset(all_mz, subset = keep_species == 1)
+
+# Filter lipid matrix to keep only wanted columns
+normalized_mat <- normalized_mat[, all_mz_filtered$mz]
+
+# Replace column names with identities
+colnames(normalized_mat) <- all_mz_filtered$identity
+
+# Create new assay in integrated_msi_subset with renamed features
+normalized_mat <- t(normalized_mat)  # Transpose back
+# Create assay with just counts - Seurat will handle the data slot
+lipid047sub_sub[["Renamed_RNA"]] <- CreateAssayObject(
+    data = normalized_mat
+)
+#get meta data
+sub_clusters <- rna047sub_sub$seurat_clusters
+group_data <- rna047sub_sub$group
+names(sub_clusters) <- rownames(rna047sub_sub@meta.data)
+names(group_data) <- rownames(rna047sub_sub@meta.data)
+
+# Add both as metadata to lipid047sub_sub
+lipid047sub_sub$rna_sub_cluster <- sub_clusters[rownames(lipid047sub_sub@meta.data)]
+lipid047sub_sub$group <- group_data[rownames(lipid047sub_sub@meta.data)]
+
+# Set this as the identity for differential expression
+Idents(lipid047sub_sub) <- "rna_sub_cluster"
+
+# Use this for finding markers
+lipid047sub_sub_markers_mz <- FindAllMarkers(lipid047sub_sub,
+                                            assay = "Renamed_RNA",
+                                            only.pos = TRUE,
+                                            min.pct = 0.25,
+                                            logfc.threshold = 0.25)
+# 0 versus 2
+#####################find RNA markers between 0 and 2
+lipid047sub_sub_0vs2 <- FindMarkers(lipid047sub_sub, ident.1 = "Sub0", ident.2 = "Sub2", assay = "Renamed_RNA")
+#save marker genes
+write.csv(lipid047sub_sub_0vs2, paste0(save_path, "/markers/lipid047sub_sub_0vs2.csv"), row.names = TRUE)
+#read marker genes
+lipid047sub_sub_0vs2 <- read.csv(paste0(save_path, "/markers/lipid047sub_sub_0vs2.csv"), header = TRUE)
+# Get up-regulated lipids (positive avg_log2FC)
+up_lipids <- lipid047sub_sub_0vs2 %>%
+    filter(p_val_adj < 0.05, avg_log2FC > 0) %>%
+    arrange(desc(avg_log2FC)) %>%
+    head(25)
+
+# Get down-regulated lipids (negative avg_log2FC)
+down_lipids <- lipid047sub_sub_0vs2 %>%
+    filter(p_val_adj < 0.05, avg_log2FC < 0) %>%
+    arrange(avg_log2FC) %>%
+    head(25)
+#order seurat_clusters as Sub0-4
+lipid047sub_sub$seurat_clusters <- factor(lipid047sub_sub$seurat_clusters, levels = c("Sub0","Sub1","Sub2","Sub3","Sub4"))
+#RidgePlot(lipid047sub_sub, features = head(up_lipids$X,20), group.by = "group", ncol = 4, stack = T, cols = c(rep("grey",20))) + NoLegend() + RotatedAxis() + ggtitle(label = "Top 20 up-regulated lipids (Sub0 versus Sub2)")
+
+# # Combine them if you need both sets together
+# all_sig_lipids <- bind_rows(up_lipids, down_lipids)
+# DoHeatmap(lipid047sub_sub, 
+#           features = c(sort(up_lipids$X),sort(down_lipids$X)), cells = WhichCells(lipid047sub_sub, idents = c("Sub0","Sub2"))) + 
+#     NoLegend()
+
+# Save markers
+write.csv(lipid047sub_sub_markers_mz, 
+          paste0(save_path,"markers/lipid047sub_sub_markers_mz.csv"))
+#read markers
+lipid047sub_sub_markers_mz <- read.csv(paste0(save_path,"markers/lipid047sub_sub_markers_mz.csv"), header = TRUE)
+
+# Scale data for heatmap
+lipid047sub_sub <- ScaleData(lipid047sub_sub, assay = "Renamed_RNA", features = rownames(lipid047sub_sub@assays[["Renamed_RNA"]]@data))
+
+# Filter for significant markers
+lipid047sub_sub_markers_mz <- lipid047sub_sub_markers_mz[lipid047sub_sub_markers_mz$p_val < 0.05,]
+
+# Create heatmap
+# Get top 10 features per cluster based on avg_log2FC
+# Sort by cluster number first, then by avg_log2FC within each cluster
+top_n_lipids_per_sub_cluster <- lipid047sub_sub_markers_mz %>%
+  group_by(cluster) %>%
+  top_n(n = 20, wt = avg_log2FC) %>%
+  arrange(cluster, desc(avg_log2FC)) %>%
+  ungroup()
+rna_sub_cluster_lipid_heat <- DoHeatmap(object = lipid047sub_sub,
+                                      features = top_n_lipids_per_sub_cluster$gene,
+                                      group.by = "rna_sub_cluster",
+                                      assay = "Renamed_RNA",
+                                        slot = "scale.data",
+                                      group.colors = rna_clus_colour,
+                                        ) +
+                              scale_fill_gradientn(colors = c("navy", "white", "firebrick3")) +
+                              theme(axis.text.y = element_text(size = 8))
+#save rna_sub_cluster_lipid_heat
+pdf(paste0(save_path,"rna_sub_cluster_lipid_heat_TEST.pdf"), height = 12, width = 9)
+  print(rna_sub_cluster_lipid_heat)
+dev.off()
+
+
+# Top 20 features for Sub0 and Sub2
+top_n_lipids_Sub0 <- lipid047sub_sub_markers_mz %>%
+    filter(cluster %in% c("Sub0")) %>%
+    filter(p_val_adj < 0.05, avg_log2FC > 0.32) %>%
+    arrange(desc(avg_log2FC)) 
+
+top_n_lipids_Sub2 <- lipid047sub_sub_markers_mz %>%
+    filter(cluster %in% c("Sub2")) %>%
+    filter(p_val_adj < 0.05, avg_log2FC > 0.32) %>%
+    arrange(desc(avg_log2FC))  
+
+top_n_lipids_infection <- rbind(top_n_lipids_Sub0, top_n_lipids_Sub2)
+
+lands_cycle_lipids <- top_n_lipids_infection %>%
+    filter(grepl("LPC|PC\\([0-9]", gene) & 
+           !grepl("PC\\(O-|IPC|MIPC", gene))
+
+# Now group by gene and keep the one with higher absolute log fold change
+lands_cycle_lipids <- lands_cycle_lipids[order(lands_cycle_lipids$cluster, -lands_cycle_lipids$avg_log2FC), ]
+# Remove duplicates by keeping the first occurrence of each gene (which has the highest avg_log2FC due to sorting)
+lands_cycle_lipids <- lands_cycle_lipids[!duplicated(lands_cycle_lipids$gene), ]
+# Filter to keep only entries with avg_log2FC greater than 0.5
+lands_cycle_lipids <- lands_cycle_lipids[lands_cycle_lipids$avg_log2FC > 0.5, ]
+#plotting ridgeplots
+n_features <- length(lands_cycle_lipids$gene)
+n_groups <- length(unique(lipid047sub_sub$group))
+sub0_2_ridge <- RidgePlot(
+    lipid047sub_sub, 
+    features = lands_cycle_lipids$gene, 
+    group.by = "group", 
+    stack = T, 
+    cols = c(rep("grey", n_features * n_groups)), 
+    assay = "Renamed_RNA"
+) + 
+NoLegend() + 
+RotatedAxis() + 
+ggtitle(label = "PC/LPC species distribution by cluster origin") +
+theme(plot.title = element_text(size = 10))
+
+pdf(paste0(save_path,"top_lipids_ridgeplots_with_sub0_2_NEW.pdf"), height = 4, width = 15)
+  sub0_2_ridge  
+dev.off()
+
+
+
+#
+# LPC(18:2)	mz.520.33992	
+# LPC(18:1)	mz.522.35497	
+# LPC(18:0)	mz.524.37052	
+# LPC(20:4)	mz.544.33914	
+# LPC(16:0) mz.496.34051
+
+
+# #Plot LPC(18:2). or 520.33992 on spatial data
+# pdf(paste0(save_path,"spatial_feature_mz-520-33992_LPC18:2.pdf"), height = 6, width = 5)
+#   SpatialPlot(integrated_d28_cohort_wlipids, features = "mz-520-33992", image.alpha = 0, , images = c("X334.I2"), pt.size.factor = 4000, min.cutoff = summary_lpc_18_2[3], max.cutoff = top_90pc_lpc_18_2)
+#   SpatialPlot(integrated_d28_cohort_wlipids, features = "mz-520-33992", image.alpha = 0, , images = c("X345.I3"), pt.size.factor = 800, min.cutoff = summary_lpc_18_2[3], max.cutoff = top_90pc_lpc_18_2)
+#   SpatialPlot(integrated_d28_cohort_wlipids, features = "mz-520-33992", image.alpha = 0, , images = c("X345.I5"), pt.size.factor = 4000, min.cutoff = summary_lpc_18_2[3], max.cutoff = top_90pc_lpc_18_2)
+#   SpatialPlot(integrated_d28_cohort_wlipids, features = "mz-520-33992", image.alpha = 0, , images = c("X334.N2.I4"), pt.size.factor = 4000, min.cutoff = summary_lpc_18_2[3], max.cutoff = top_90pc_lpc_18_2)
+# dev.off()
+# Define our LPC species and their masses
+lpc_species <- data.frame(
+  identity = c("LPC(16:0)","LPC(18:2)", "LPC(18:1)", "LPC(18:0)", "LPC(20:4)"),
+  mz = c("mz-496-34051","mz-520-33992", "mz-522-35497", "mz-524-37052", "mz-544-33914"),
+  stringsAsFactors = FALSE
+)
+
+# Function to get summary stats for each species
+get_species_stats <- function(feature, object) {
+  feature_values <- object@meta.data[[feature]]
+  list(
+    summary = summary(feature_values),
+    top_90pc = quantile(feature_values, 0.9)
+  )
+}
+
+# Create plots for each species
+for(i in 1:nrow(lpc_species)) {
+  # Get stats for this species
+  stats <- get_species_stats(lpc_species$mz[i], integrated_d28_cohort_wlipids)
+  
+  pdf(paste0(save_path, "spatial_feature_", lpc_species$mz[i], "_", lpc_species$identity[i], ".pdf"), 
+      height = 6, width = 5)
+  
+  # Plot each image
+  print(SpatialPlot(integrated_d28_cohort_wlipids, 
+                    features = lpc_species$mz[i], 
+                    image.alpha = 0, 
+                    images = c("X334.I2"), 
+                    pt.size.factor = 4000, 
+                    min.cutoff = stats$summary[3], 
+                    max.cutoff = stats$top_90pc)) + 
+                    ggtitle(lpc_species$identity[i])
+  
+  print(SpatialPlot(integrated_d28_cohort_wlipids, 
+                    features = lpc_species$mz[i], 
+                    image.alpha = 0, 
+                    images = c("X345.I3"), 
+                    pt.size.factor = 800, 
+                    min.cutoff = stats$summary[3], 
+                    max.cutoff = stats$top_90pc)) + 
+                    ggtitle(lpc_species$identity[i])
+  
+  print(SpatialPlot(integrated_d28_cohort_wlipids, 
+                    features = lpc_species$mz[i], 
+                    image.alpha = 0, 
+                    images = c("X345.I5"), 
+                    pt.size.factor = 4000, 
+                    min.cutoff = stats$summary[3], 
+                    max.cutoff = stats$top_90pc)) + 
+                    ggtitle(lpc_species$identity[i])
+  
+  print(SpatialPlot(integrated_d28_cohort_wlipids, 
+                    features = lpc_species$mz[i], 
+                    image.alpha = 0, 
+                    images = c("X334.N2.I4"), 
+                    pt.size.factor = 4000, 
+                    min.cutoff = stats$summary[3], 
+                    max.cutoff = stats$top_90pc)) + 
+                    ggtitle(lpc_species$identity[i])
+  
+    print(SpatialPlot(integrated_d28_cohort_wlipids, 
+                    features = lpc_species$mz[i], 
+                    image.alpha = 0, 
+                    images = c("X345.N1"), 
+                    pt.size.factor = 4000, 
+                    min.cutoff = stats$summary[3], 
+                    max.cutoff = stats$top_90pc)) + 
+                    ggtitle(lpc_species$identity[i])
+    
+    print(SpatialPlot(integrated_d28_cohort_wlipids, 
+                    features = lpc_species$mz[i], 
+                    image.alpha = 0, 
+                    images = c("X345.N4"), 
+                    pt.size.factor = 4000, 
+                    min.cutoff = stats$summary[3], 
+                    max.cutoff = stats$top_90pc)) + 
+                    ggtitle(lpc_species$identity[i])
+    
+    print(SpatialPlot(integrated_d28_cohort_wlipids, 
+                    features = lpc_species$mz[i], 
+                    image.alpha = 0, 
+                    images = c("X334.N3"), 
+                    pt.size.factor = 4000, 
+                    min.cutoff = stats$summary[3], 
+                    max.cutoff = stats$top_90pc)) + 
+                    ggtitle(lpc_species$identity[i])
+  
+dev.off()
+}
+#create correlations between LPCs
+# Extract LPC data
+lpc_data <- integrated_d28_cohort_wlipids@meta.data[, lpc_species$mz]
+colnames(lpc_data) <- lpc_species$identity
+
+# Calculate correlation matrix
+lpc_corr <- cor(lpc_data, method = "spearman")
+
+# Calculate significance
+lpc_p <- cor.mtest(lpc_data)$p
+
+# Create correlation plot
+pdf(paste0(save_path, "LPC_correlations.pdf"), height = 6, width = 6)
+corrplot(lpc_corr, 
+         type = "upper",
+         p.mat = lpc_p, 
+         sig.level = 0.05,
+         insig = "blank",
+         tl.col = "black",
+         col = colorRampPalette(c("navy", "white", "firebrick3"))(100))
+dev.off()
+#####################find RNA markers between 0 and 2
+Idents(rna047sub_sub)<-"seurat_clusters"
+rna047sub_sub_0vs2 <- FindMarkers(rna047sub_sub, ident.1 = "Sub0", ident.2 = "Sub2", assay = "Spatial")
+#save marker genes
+write.csv(rna047sub_sub_0vs2, paste0(save_path, "/markers/rna047sub_sub_0vs2.csv"), row.names = TRUE)
+#read marker genes
+rna047sub_sub_0vs2 <- read.csv(paste0(save_path, "/markers/rna047sub_sub_0vs2.csv"), header = TRUE)
+
+
+#define a dataframe for volcano plot  
+df <- rna047sub_sub_0vs2
+#df$gene <- rownames(df)
+df$p_val <- NULL
+#reformat column names
+colnames(df) <- c("gene","log2FoldChange","pct1","pct2","pvalue")
+#setting a very small number in lieu of zero p-value
+df$pvalue[df$pvalue==0]<-5e-305
+#remove pvalue <0.05
+df <- df[df$pvalue<0.05,]
+#adding gene names as rownames 
+rownames(df) <- df$gene
+
+#Plotting figure 2E
+pdf(paste0(save_path, "/markers/Fig4D_rna047sub_sub_0vs2.pdf"), height = 15, width =12)
+      print(EnhancedVolcano(df,
+                      lab = rownames(df),
+                      x = 'log2FoldChange',
+                      xlim = c(-2, 2),
+                      ylim = c(0,220),
+                      y = 'pvalue',
+                      title = "rna047sub_sub_0vs2.csv",
+                      pCutoff = 10e-5,
+                      FCcutoff = 1.0,
+                      pointSize = 1,
+                      labSize = 5, 
+                      subtitle = "",
+                      drawConnectors = TRUE,
+                      widthConnectors = 0.25)
+  )
+dev.off()
+#####################
+summary_lpc_18_2<-summary(integrated_d28_cohort_wlipids$`mz-520-33992`)
+#find the top 90th percentile expression of LPC(18:2)
+top_90pc_lpc_18_2 <- quantile(integrated_d28_cohort_wlipids$`mz-520-33992`, 0.8)
+
+
+
+
+```
+
+```{r plot_sub}
+
+write.csv(rna047sub_sub@meta.data[, c("seurat_clusters",celltypes)], paste0(save_path,"abundance_in_sub01234.csv"), row.names = F)
+
+sub_clust_rna_col <- c("cornflowerblue","bisque","brown3","cadetblue2","chartreuse")
+
+rna047sub_sub_clust <- DimPlot(rna047sub_sub, label = T, label.box = T,label.size = 6,  cols = sub_clust_rna_col, pt.size = 1.5, reduction = "tsne", group.by = "seurat_clusters")+ NoLegend() + ggtitle(label = "RNA_4 sub-clusters")
+rna047sub_sub_clust_orig <- DimPlot(rna047sub_sub, label = T, label.box = T,label.size = 6,   cols = c("grey","pink"), pt.size = 1.5, group.by = "group", reduction = "tsne")+ NoLegend() + ggtitle(label = "Group")
+
+pdf(paste0(save_path,"sub_clust_rna4sub_sub_tsne.pdf"), height = 6, width = 18)
+  rna047sub_sub_clust + rna047sub_sub_clust_orig 
+dev.off()  
+
+################################################################
+################################################################
+################################################################
+###########COLOURS NEED CHANGING EVERYTIME MANUALLY#############
+################################################################
+################################################################
+ # 0"cornflowerblue",1"bisque","2brown3",3"cadetblue2",4"chartreuse",5"darkgoldenrod",6"darkolivegreen","coral2","darkorange","darkslategray4")
+pdf(paste0(save_path,"sub_clust_rna_4_lipid_4_SPATIAL_sub.pdf"), height = 10, width = 12)
+  sub_clus_rna047_lipid4<-SpatialDimPlot(rna047sub, ncol = 4, pt.size.factor = 1.5,images=c("X334.I2","X345.I3","X345.I5","X334.N2.I4","X345.N1","X345.N4","X334.N3"),crop = F, group.by="meta_rna047sub_sub_clusters", image.alpha = 0.2)
+  #0,2
+  i2<-sub_clus_rna047_lipid4[[1]]+scale_fill_manual(values=col2hex(c(sub_clust_rna_col[1],sub_clust_rna_col[3])))
+  #0,2
+  i3<-sub_clus_rna047_lipid4[[2]]+scale_fill_manual(values=col2hex(c(sub_clust_rna_col[1],sub_clust_rna_col[3])))
+  #0,2
+  i5<-sub_clus_rna047_lipid4[[3]]+scale_fill_manual(values=col2hex(c(sub_clust_rna_col[1],sub_clust_rna_col[3])))
+  #i4>>0,2
+  n2i4<-sub_clus_rna047_lipid4[[4]]+scale_fill_manual(values=col2hex(c(sub_clust_rna_col[1],sub_clust_rna_col[2],sub_clust_rna_col[3],sub_clust_rna_col[5])))
+  
+  print(i2+i3+i5+n2i4)
+  #print(n1+n4+n3+n2i4)
+  rm(i2,i3,i5,n2i4)
+  #rm(n1,n4,n3)
+  #rna_4@meta.data$lipid_clusters <- droplevels(rna_4@meta.data$lipid_clusters)
+
+dev.off()
+
+
+dotCellsSub <- DotPlot(rna047sub_sub, features = celltypes, group.by = "seurat_clusters", scale = T, cols = c("azure","maroon"), dot.scale = 12) + coord_flip() + ylab(label = "") + xlab(label = "") + theme(axis.text.x = element_text(angle = 45))
+
+pdf(paste0(save_path,"cell2location_abundances_transcript_rna047sub_sub_clusters.pdf"), height = 6, width = 9)
+  dotCellsSub 
+dev.off()
+
+pdf(paste0(save_path,"cell2location_macrophage_abundances_transcript_rna047sub_sub_clusters.pdf"), height = 3, width = 7)
+  VlnPlot(rna047sub_sub, features = c("ApoehiCxcl9hi_Mac","Lyz2hiCxcl9lo_Mac"), cols = sub_clust_rna_col)
+dev.off()
+
+# pdf(paste0(save_path,"vln_rna_features_rna047sub_sub_clusters.pdf"), height = 6, width = 15)
+#   rna_features<-c("Nos2","Ifng","Tnf","Il6","Arg1","Il10","Tgfb1","Lpcat1","Lpcat2","Pla2g7")
+#   VlnPlot(rna047sub_sub, features = rna_features, group.by = "seurat_clusters", cols = rep("grey",10), ncol = 5) + theme(axis.text.x = element_text(angle = 45, hjust=1))
+# dev.off()
+# 
+# lipid_features1<-c("mz.713.35127","mz.753.38231","mz.793.4142","mz.788.54259","mz.744.58948","mz.528.2726","mz.677.25456","mz.606.29565","mz.582.29542","mz.1469.9477","mz.621.30185","mz.1471.9617")
+# lipid_features2<-c("mz.771.49267","mz.645.48544","mz.649.5173","mz.929.59532","mz.924.56131","mz.1614.1477","mz.1614.1477","mz.1562.117","mz.1588.1327","mz.771.49267","mz.802.53656","mz.778.53737")
+# VlnPlot(rna047sub_sub, features = lipid_features1, group.by = "seurat_clusters") 
+# VlnPlot(rna047sub_sub, features = lipid_features2, group.by = "seurat_clusters") 
+```
+
+```{r venndiagram for rna047sub clusters}
+rna047_markers <- read.csv(paste0(save_path,"markers/rna047sub_sub_markers_rna.csv"))
+#Fetch the top significant markers for sub0 and sub2 and store them as lists
+rna047_markers_sub0 <- rna047_markers[rna047_markers$cluster == "0" & rna047_markers$p_val_adj<0.05 & rna047_markers$avg_log2FC > 0.25,]$gene
+rna047_markers_sub2 <- rna047_markers[rna047_markers$cluster == "2" & rna047_markers$p_val_adj<0.05  & rna047_markers$avg_log2FC > 0.25,]$gene
+#read reactome genes
+reactome_genes<-read.csv(paste0(save_path,"REACTOME_METABOLISM_OF_LIPIDSv2023.1.Mm.csv"), header = F, col.names = "gene")
+reactome_genes<-reactome_genes$gene
+#select top 600 (if available) genes from rna047 gene lists
+#only if the list is longer than length(reactome_genes)
+if(length(rna047_markers_sub0)>length(reactome_genes)){
+  rna047_markers_sub0<-rna047_markers_sub0[1:length(reactome_genes)]
+}
+if(length(rna047_markers_sub2)>length(reactome_genes)){
+  rna047_markers_sub2<-rna047_markers_sub2[1:length(reactome_genes)]
+}
+#create a venn diagram of the three lists
+sub0string<-paste0("Sub0 (",length(rna047_markers_sub0),")")
+sub2string<-paste0("Sub2 (",length(rna047_markers_sub2),")")
+reactomestring<-paste0("Reactome (",length(reactome_genes),")")
+venn.diagram(
+  x = list(rna047_markers_sub0, rna047_markers_sub2, reactome_genes),
+  category.names = c(sub0string,sub2string,reactomestring),
+  filename = paste0(save_path, "markers/venn_rna047sub_sub_clusters.png"),
+  #increase font size of categories
+  category.cex = 2,
+  cex = 2,
+  #output=TRUE,
+  main="Granuloma sub-clusters"
+)
+#create intersection lists of all three gene lists
+rna047_markers_sub0_sub2<-intersect(rna047_markers_sub0, rna047_markers_sub2)
+rna047_markers_sub0_reactome<-intersect(rna047_markers_sub0, reactome_genes)
+rna047_markers_sub2_reactome<-intersect(rna047_markers_sub2, reactome_genes)
+```
+
+
+
+```{r Figure 5 lipid genes intersection}
+acyl_chain_remodelling_genes<-c("Lpcat1","Lpcat2","Lpcat3","Lpcat4","Mboat2","Pla2g10","Pla2g12a","Pla2g1b","Pla2g2a","Pla2g2d","Pla2g2e","Pla2g2f","Pla2g3","Pla2g4a","Pla2g4b","Pla2g4c","Pla2g4d","Pla2g4e","Pla2g4f","Pla2g5","Pla2g6","Pla2r1","Plaat3","Plb1","Plbd1","Pnpla8","Tmem86b","Pla2g15","Pla2g7")
+lpcat2_remodelling<-c("Lpcat2","Pla2g4a","Pla2g15","Pla2g7")
+cytokines=c("Tnf","Nos2","Il6","Il1b")
+rna047sub_sub=AddModuleScore(rna047sub_sub,features=list(acyl_chain_remodelling_genes), name="PC_remodelling_score")
+rna047sub_sub=AddModuleScore(rna047sub_sub,features=list(cytokines), name="Kill_score")
+rna047sub_sub=AddModuleScore(rna047sub_sub,features=list(lpcat2_remodelling), name="LPCAT2_remodelling_score")
+Idents(rna047sub_sub)<-"seurat_clusters"
+pdf(paste0(save_path,"acyl_chain_remodelling_in_all_subcluster_space.pdf"), height = 4, width = 9)
+  DotPlot(rna047sub_sub, features=acyl_chain_remodelling_genes)+ RotatedAxis() + ggtitle(label = "") + xlab(label = "") + ylab(label = "")
+  VlnPlot(rna047sub_sub,features=c("LPCAT2_remodelling_score1"), cols = c(rep("grey",18))) 
+dev.off()  
+###########
+###########
+data <- rna047sub_sub$LPCAT2_remodelling_score1
+# Create the plot
+pdf(paste0(save_path,"LPCAT2_remodelling_score_histogram_in_space.pdf"), width=6, height=4)  # 
+  # Create plot and get valley point
+  valley_point <- plot_with_valley(data, "LPCAT2-Phospholipid Re-modelling Score")
+
+dev.off()
+# Print valley point
+if(!is.null(valley_point)) {
+  cat("Valley point between highest peaks:", round(valley_point, 2), "\n")
+}
+###########
+###########
+
+pdf(paste0(save_path,"acyl_chain_remodelling_in_granulomatous_space_Sub0_Sub2.pdf"), height = 7, width = 5)
+  DotPlot(rna047sub_sub, assay = "SCT", features = acyl_chain_remodelling_genes, idents = c("Sub0","Sub2")) + RotatedAxis() + ylab(label = "") + xlab(label = "") + NoLegend()
+  VlnPlot(rna047sub_sub,features=c("PC_remodelling_score1"),  idents = c("Sub0","Sub2"), cols = c(rep("grey",18))) + NoLegend()
+  VlnPlot(rna047sub_sub,features=c("Lpcat2"),  idents = c("Sub0","Sub2"), cols = c(rep("grey",18))) + NoLegend()
+  VlnPlot(rna047sub_sub,features=c("LPCAT2_remodelling_score1"),  idents = c("Sub0","Sub2"), cols = c(rep("grey",18))) + NoLegend() #+  geom_hline(yintercept = round(valley_point, 2),color="maroon", linetype="dashed") 
+  VlnPlot(rna047sub_sub,features=c("Kill_score1"),  idents = c("Sub0","Sub2"), cols = c(rep("grey",18))) + NoLegend()
+dev.off()
+
+
+```
+
+```{r correlations_lpcat2, message=FALSE}
+obj_str<-"rna047sub_sub0"
+rna047sub_sub0<-subset(rna047sub_sub, cells = WhichCells(rna047sub_sub, idents = "0"))
+######
+#function correlation
+######
+fn_get_corr_mat <- function(obj, gene_name){
+  correlation_df_list<-list()
+
+
+  mat_count<-as.matrix(obj[['SCT']]@data)
+
+  #search correlations for first lincRNA only - hardcoded atm
+  #gene_name<-X[1]
+  type<-"spearman"
+
+  #get 'gene of interest' expression of all cells
+  count_gene<-mat_count[gene_name,]
+
+  correlation_mat<-matrix(nrow = dim(mat_count)[1], ncol = 2)
+  #add rownames
+  rownames(correlation_mat) <- rownames(mat_count)
+  # Create a nested loop
+  for(row in 1:nrow(mat_count)) {
+    correlation<-stats::cor.test(count_gene, mat_count[row,], method = type)
+    correlation_mat[row,1]<-correlation$estimate
+    correlation_mat[row,2]<-correlation$p.value
+  }
+  correlation_mat<-as.data.frame(correlation_mat)
+  colnames(correlation_mat)<-c("corr_estimate","pvalue")
+  correlation_mat$gene<-rownames(correlation_mat)
+  #discard pvalues greater than 0.05 and correlations below 0.1
+  correlation_df<-sqldf::sqldf("SELECT gene, corr_estimate, pvalue
+                                FROM correlation_mat
+                                WHERE pvalue < 0.05
+                                AND corr_estimate > 0.1
+                                ORDER BY corr_estimate DESC")
+
+  anti_correlation_df<-sqldf::sqldf("SELECT gene, corr_estimate, pvalue
+                                FROM correlation_mat
+                                WHERE pvalue < 0.05
+                                AND corr_estimate < -0.1
+                                ORDER BY corr_estimate ASC")
+  #write.table(correlation_mat, file = paste0(exp_path, "All_CD8_T_PBMC_Malat1_Vs_allGene_flu_corr.csv"), sep=",")
+  correlation_df_list[[paste0("corr_", gene_name)]]<-correlation_df
+  correlation_df_list[[paste0("acorr_", gene_name)]]<-anti_correlation_df
+  list_corr_mat <- correlation_df_list
+  return(list_corr_mat)
+}
+
+gene_name<-"Lpcat2"
+
+# Start the clock!
+ptm <- proc.time()
+
+list_corr_mat<-fn_get_corr_mat(rna047sub_sub0, gene_name)
+
+# Stop the clock
+time_taken<- proc.time() - ptm
+
+print(paste0("Time elapsed: ", sprintf((time_taken[3]/60), fmt = '%#.2f')," minutes"))
+
+head(list_corr_mat[[paste0("corr_", gene_name)]],20)
+head(list_corr_mat[[paste0("acorr_", gene_name)]],20)
+
+write.table(list_corr_mat[[paste0("corr_", gene_name)]], file = paste0(save_path,"corr_",obj_str,"_",gene_name,".csv"), sep=",", row.names = FALSE)
+
+write.table(list_corr_mat[[paste0("acorr_", gene_name)]], file = paste0(save_path, "acorr_",obj_str,"_",gene_name,".csv"), sep=",", row.names = FALSE)
+
+rm(list_corr_mat)
+
+```
+
+```{r plot_rna047sub_sub0_spatial_lpcat2_corr}
+obj_str<-"rna047sub_sub0"
+spatial_lpcat2_corr <- read.csv(paste0(save_path,"corr_",obj_str,"_",gene_name,".csv"), header = TRUE)
+# Order the data by correlation value
+spatial_lpcat2_corr <- spatial_lpcat2_corr[order(-spatial_lpcat2_corr$corr_estimate), ]
+#retain top 10 correlated genes
+spatial_lpcat2_corr<-spatial_lpcat2_corr[1:10,]
+# Convert gene to factor to maintain order in plot
+spatial_lpcat2_corr$gene <- factor(spatial_lpcat2_corr$gene, levels = spatial_lpcat2_corr$gene)
+#remove the row with Lpcat2 as gene name
+spatial_lpcat2_corr<-spatial_lpcat2_corr[spatial_lpcat2_corr$gene != gene_name,]
+#plot correlations as a bar graph with gene names as a sorted factor
+
+pdf(paste0(save_path, "/","spatial_lpcat2_corr_bar_",test_obj_str,"_Fig4.pdf"), width = 2, height = 4)
+  ggplot(spatial_lpcat2_corr, aes(x = gene, y = corr_estimate)) +
+    geom_bar(stat = "identity", fill = "grey") +
+    coord_flip() +  # Flip coordinates to make horizontal bars
+    theme_minimal() +
+    labs(
+      title = "Lpcat2 correlated genes - top 5%",
+      x = "",
+      y = "Correlation (Spearman's)"
+    ) #+ #remove grid
+    #theme(axis.text.x = element_text(angle = 45, hjust = 1),panel.grid.major = element_blank(),panel.grid.minor = element_blank())
+dev.off()
+```
