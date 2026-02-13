@@ -83,7 +83,7 @@ other attached packages:
 - End-to-end analysis (R scripts): ~1–2 hours on Windows 10 with 64GB RAM, 8-core CPU (Intel Core i7-9700 or equivalent).
 
 ### Additional data files required:
-The following files are available on [Zenodo](https://zenodo.org/) (DOI to be added upon publication):
+The following files are available on Zenodo: [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18636666.svg)](https://doi.org/10.5281/zenodo.18636666)
 
 **Pre-processed Seurat objects (.rds):**
 
