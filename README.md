@@ -82,8 +82,15 @@ other attached packages:
 ### Running Time:
 - End-to-end analysis (R scripts): ~1–2 hours on Windows 10 with 64GB RAM, 8-core CPU (Intel Core i7-9700 or equivalent).
 
-### Additional files required:
-Rds files will be made available upon request.
+### Additional data files required:
+The following pre-processed `.rds` files are available on [Zenodo](https://zenodo.org/) (DOI to be added upon publication):
+
+| File | Required by |
+|------|-------------|
+| `integrated_sd2705_dims15_res0.4.rds` | `scRNAseq_downstream_analysis.Rmd` |
+| `integrated_d28_cohort_dims30_res_0.4.Rds` | `spatial_downstream_analysis.Rmd` |
+
+Download these files from Zenodo and place them in the appropriate directories as referenced in each notebook's user-configurable paths section.
 
 ## Repository Structure & Instructions
 
