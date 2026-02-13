@@ -1,0 +1,43 @@
+# R
+.Rhistory
+.Rproj.user
+*.Rproj
+.RData
+*.rds
+*.Rds
+*.RDS
+
+# R Markdown outputs
+*.html
+*.pdf
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+*.egg
+
+# Data files
+*.h5
+*.h5ad
+*.h5seurat
+*.mtx
+*.mtx.gz
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+*.out
+
+# cell2location outputs
+cell2location_map/
+reference_signatures/

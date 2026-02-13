@@ -1,263 +1,177 @@
 ---
-title: "introduction"
+title: "Spatial Transcriptomics (Visium) Integration and Preparation"
 output: rmarkdown::html_vignette
 vignette: >
-  %/VignetteIndexEntry{introduction}
+  %/VignetteIndexEntry{Spatial Transcriptomics Integration and Preparation}
   %/VignetteEngine{knitr::rmarkdown}
   %/VignetteEncoding{UTF-8}
 ---
 
-```{r message=FALSE}
-#library(customSeuratAnalysis)
+```{r setup, message=FALSE}
 library(Seurat)
 library(dplyr)
 library(sqldf)
 library(ggplot2)
-# library(SingleCellExperiment)
-#library(glmGamPoi)
 library(patchwork)
-library(Seurat)
-library(sqldf)
-library(dplyr)
-library(AUCell)
 library(SingleCellExperiment)
 library(mclust)
-library(slingshot)
 library(RColorBrewer)
-library(sqldf)
 library(ggpubr)
-library(tradeSeq)
-
 library(data.table)
-library(GSEABase)
 library(plotly)
-
-#library(GEOquery)
-
 library(spatstat)
 library(gplots)
 library(corrplot)
 library(stringr)
-
 library(VennDiagram)
-library(grid)#for printing PDFs off finder makrer
-
+library(grid)
 library(reshape2)
-library(ggplot2)
-#define study path
-#cell_type<-"CD8"
-study_name<-"ymp_d28"
-study_path<-"D:/GoogleDrive/spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/"
+library(tidyr)
 
-# 334-I2	_1
-# 334-I4	_2
-# 334-N2-I4	_3
-# 334-N3	_4
-# 345-I3	_5
-# 345-I5	_6
-# 345-N1	_7
-# 345-N4	_8
+# ──────────────────────────────────────────────────────────────
+# USER-CONFIGURABLE PATHS
+# Update these paths to match your local environment.
+# ──────────────────────────────────────────────────────────────
+study_name <- "ymp_d28"
+study_path <- "D:/GoogleDrive/spatial_leishmania/spatial/_EXPERIMENTS/SD22.5.1_YMP_day28pi/"
 
-all_samples <-c("334-I2","334-I4","334-N2-I4","334-N3","345-I3","345-I5","345-N1","345-N4")
-sample_group <- c("inf","inf","healthy","healthy","inf","inf","healthy","healthy")
+all_samples <- c("334-I2", "334-I4", "334-N2-I4", "334-N3", "345-I3", "345-I5", "345-N1", "345-N4")
+sample_group <- c("inf", "inf", "healthy", "healthy", "inf", "inf", "healthy", "healthy")
 
+save_path <- paste0(study_path, "R/woI4/")
 
-save_path<-paste0(study_path,"R/woI4/")
-save_on<-1
-
-res=0.4
-dims=20
-
+res <- 0.4
+dims <- 20
 ```
 
-!!!!!!!!!!!!!!!!!!!ANALYSIS GOALS!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 Load/create Seurat Object
-- Change this subsequently to expression matrix and build stats for generic usage
-```{r loadSeurath5}
 
+```{r loadSeurath5}
 seuratSpatial <- list()
-counter<-1
-for (sample in all_samples){
-  sample_dir <- Sys.glob(paste0(study_path,"visium/","V*/*",sample,"/"))
-  sample_path <- Sys.glob(paste0(study_path,"visium/","V*/*",sample,"/","*.h5"))
+counter <- 1
+
+for (sample in all_samples) {
+  sample_dir <- Sys.glob(paste0(study_path, "visium/", "V*/*", sample, "/"))
+  sample_path <- Sys.glob(paste0(study_path, "visium/", "V*/*", sample, "/", "*.h5"))
   sample_path_file <- tail(strsplit(sample_path, split = "/")[[1]], n = 1)
-  #key <- paste0("LC_",sample)
-  seuratSpatial[[sample]]<-Load10X_Spatial(
-                                        sample_dir,
-                                        filename = sample_path_file,
-                                        assay = "Spatial",
-                                        slice = sample,
-                                        filter.matrix = TRUE,
-                                        to.upper = FALSE
-                                      )
-  if(sample == "334-N2-I4"){
-    sample_csv_path <- Sys.glob(paste0(study_path,"visium/","V*/*",sample,"/","mouse.csv"))
+
+  seuratSpatial[[sample]] <- Load10X_Spatial(
+    sample_dir,
+    filename = sample_path_file,
+    assay = "Spatial",
+    slice = sample,
+    filter.matrix = TRUE,
+    to.upper = FALSE
+  )
+
+  if (sample == "334-N2-I4") {
+    sample_csv_path <- Sys.glob(paste0(study_path, "visium/", "V*/*", sample, "/", "mouse.csv"))
     sample_csv <- read.csv(sample_csv_path)
-    i4_codes <- sample_csv$Barcode[sample_csv$Mouse=="I4"]
+    i4_codes <- sample_csv$Barcode[sample_csv$Mouse == "I4"]
     seuratSpatial[[sample]]$orig.ident <- "334-N2"
     seuratSpatial[[sample]]$group <- "healthy"
     seuratSpatial[[sample]]$orig.ident[colnames(seuratSpatial[[sample]]) %in% i4_codes] <- "334-I4"
     seuratSpatial[[sample]]$group[colnames(seuratSpatial[[sample]]) %in% i4_codes] <- "inf"
-  }
-  else{
+  } else {
     seuratSpatial[[sample]]$orig.ident <- sample
     seuratSpatial[[sample]]$group <- sample_group[[counter]]
   }
 
-  counter<-counter+1
+  counter <- counter + 1
 }
-
-
 ```
 
 ```{r data_pre_processing}
 pdf(file = paste0(save_path, study_name, "_overall_counts.pdf"))
-  for(object in seuratSpatial){
+  for (object in seuratSpatial) {
     plot1 <- VlnPlot(object, features = "nCount_Spatial", pt.size = 0.1) + NoLegend()
     plot2 <- SpatialFeaturePlot(object, features = "nCount_Spatial") + theme(legend.position = "right")
     plot3 <- SpatialFeaturePlot(object, features = "nFeature_Spatial") + theme(legend.position = "right")
     print(plot1)
     print(plot2 + plot3)
-    #print(wrap_plots(plot1, plot2, plot3))
   }
 dev.off()
-
 ```
 
-```{r SCTRansform, warning=FALSE}
-
-
-for(sample in all_samples){
-  #key <- paste0("LC_",sample)
+```{r SCTransform, warning=FALSE}
+for (sample in all_samples) {
   seuratSpatial[[sample]] <- SCTransform(seuratSpatial[[sample]], assay = "Spatial", verbose = FALSE)
 }
-
-
-# merged_d28_cohort <- merge(seuratSpatial[[1]],
-#                                tail(seuratSpatial, n=length(seuratSpatial)-1),
-#                                project = "sd2251_correg")
-# 
-# var_features <- c()
-# for(sample in all_samples){
-#   var_features <- c(var_features, VariableFeatures(seuratSpatial[[sample]] ))
-# }
-# var_features <- unique(var_features)
 ```
 
-
-Integrate only when looking at common signatures
+Integrate for common signatures
 
 ```{r integrate_workflow_for_spatial}
-
 features <- SelectIntegrationFeatures(object.list = seuratSpatial, nfeatures = 3000)
 seuratSpatial <- PrepSCTIntegration(object.list = seuratSpatial, anchor.features = features)
-#object_list[[paste0("cluster",cluster)]]List <- lapply(X = object_list[[paste0("cluster",cluster)]]List, FUN = RunPCA, features = features)
 
+immune.anchors <- FindIntegrationAnchors(
+  object.list = seuratSpatial,
+  normalization.method = "SCT",
+  anchor.features = features
+)
 
-immune.anchors <- FindIntegrationAnchors(object.list = seuratSpatial, normalization.method = "SCT", anchor.features = features)
-
-
-integrated_d28_cohort <- IntegrateData(anchorset = immune.anchors, normalization.method = "SCT")#, features.to.integrate =
+integrated_d28_cohort <- IntegrateData(anchorset = immune.anchors, normalization.method = "SCT")
 ```
-
-
-```{r explore_clustering}
-
-for(dims in c(5, 10, 15, 20, 30)){
-  for(res in c(0.1,0.2,0.3,0.4,0.5,0.6,0.9)){
-    print(paste0("Number of PC dimensions used=", dims))
-    print(paste0("Resolution param for FindClusters=", res))
-    pdf(paste0(save_path, "Explore_KNN_PC",dims,"_res",res,".pdf"))
-      integrated_d28_cohort <- RunPCA(LC_cohort1, assay = "SCT", verbose = FALSE)
-      integrated_d28_cohort <- FindNeighbors(integrated_d28_cohort, reduction = "pca", dims = 1:dims)
-      integrated_d28_cohort <- FindClusters(integrated_d28_cohort, verbose = FALSE, resolution = res)
-      integrated_d28_cohort <- RunUMAP(integrated_d28_cohort, reduction = "pca", dims = 1:dims)
-      integrated_d28_cohort <- RunTSNE(integrated_d28_cohort, reduction = "pca", dims = 1:dims)
-
-
-      x<-SpatialDimPlot(integrated_d28_cohort, alpha = c(5, 5))
-      y<-SpatialDimPlot(integrated_d28_cohort, alpha = c(0.0, 0.0))
-
-      print(DimPlot(integrated_d28_cohort, split.by = "group", label = TRUE)+NoLegend())
-      print(DimPlot(integrated_d28_cohort, reduction = "tsne", split.by = "group", label = TRUE)+NoLegend())
-
-      for(image in 1:length(samples)){
-        print(x[[image]]+y[[image]])
-      }
-      
-    dev.off()
-    rm(x, y, integrated_d28_cohort)
-  }
-}
-```
-
 
 ```{r clustering}
-res=0.4
-dims=30
-# integrated_d28_cohort <- merged_d28_cohort
-# VariableFeatures(integrated_d28_cohort) <- sample(var_features, 6000)
+res <- 0.4
+dims <- 30
 
 integrated_d28_cohort <- RunPCA(integrated_d28_cohort, assay = "integrated", verbose = FALSE)
 ElbowPlot(integrated_d28_cohort)
 
 integrated_d28_cohort <- FindNeighbors(integrated_d28_cohort, reduction = "pca", dims = 1:dims)
-
 integrated_d28_cohort <- FindClusters(integrated_d28_cohort, verbose = FALSE, resolution = res)
 integrated_d28_cohort <- RunUMAP(integrated_d28_cohort, reduction = "pca", dims = 1:dims)
 integrated_d28_cohort <- RunTSNE(integrated_d28_cohort, reduction = "pca", dims = 1:dims)
 
-# SpatialFeaturePlot(integrated_d28_cohort, features = c("Cd3e","Cd4","Cd8a","Cd19","Ms4a1","Ebf1"), ncol=3)
-# 
-pdf(paste0(save_path, "DimPlot_PC1to",dims,"res",res,".pdf"))
-  DimPlot(integrated_d28_cohort, reduction = "tsne", label = TRUE) + NoLegend() 
-    DimPlot(integrated_d28_cohort, reduction = "umap", label = TRUE) + NoLegend()
-  
-  DimPlot(integrated_d28_cohort, reduction = "tsne", group.by = "orig.ident") + NoLegend() 
-    DimPlot(integrated_d28_cohort, reduction = "umap", group.by = "orig.ident") 
-  
-  DimPlot(integrated_d28_cohort, reduction = "tsne", group.by = "group") + NoLegend() 
-    DimPlot(integrated_d28_cohort, reduction = "umap", group.by = "group")
-  
+pdf(paste0(save_path, "DimPlot_PC1to", dims, "res", res, ".pdf"))
+  DimPlot(integrated_d28_cohort, reduction = "tsne", label = TRUE) + NoLegend()
+  DimPlot(integrated_d28_cohort, reduction = "umap", label = TRUE) + NoLegend()
+  DimPlot(integrated_d28_cohort, reduction = "tsne", group.by = "orig.ident") + NoLegend()
+  DimPlot(integrated_d28_cohort, reduction = "umap", group.by = "orig.ident")
+  DimPlot(integrated_d28_cohort, reduction = "tsne", group.by = "group") + NoLegend()
+  DimPlot(integrated_d28_cohort, reduction = "umap", group.by = "group")
   DimPlot(integrated_d28_cohort, reduction = "tsne", split.by = "group")
   DimPlot(integrated_d28_cohort, reduction = "umap", split.by = "group")
   DimPlot(integrated_d28_cohort, reduction = "pca", split.by = "group")
 dev.off()
-  #saveRDS(integrated_d28_cohort, paste0(save_path, "integrated_d28_cohort.rds"))
-  #Output proportion per cell type, dividing by the sum of the column (margin=2)
-  prop.table(table(Idents(integrated_d28_cohort), integrated_d28_cohort$orig.ident), margin = 2)
-  #write proportion per cell type
-  write.csv(prop.table(table(Idents(integrated_d28_cohort), integrated_d28_cohort$orig.ident), margin = 2), paste0(save_path, "/markers/", "_ident_proportions_sample.csv"), row.names =TRUE)
 
-pdf(paste0(save_path, "SpatialDimPlot_PC1to",dims,"res",res,".pdf"))
-  x<-SpatialDimPlot(integrated_d28_cohort, image.alpha = 0, crop = FALSE, pt.size.factor = 1.2)
-  y<-SpatialDimPlot(integrated_d28_cohort, alpha = c(0.4, 0.4), crop = FALSE)
+# Proportions
+prop.table(table(Idents(integrated_d28_cohort), integrated_d28_cohort$orig.ident), margin = 2)
+write.csv(
+  prop.table(table(Idents(integrated_d28_cohort), integrated_d28_cohort$orig.ident), margin = 2),
+  paste0(save_path, "/markers/", "_ident_proportions_sample.csv"),
+  row.names = TRUE
+)
 
-  for(i in 1:8){
-    fig1<-x[[i]]
-    #print(ggarrange(fig1,fig2, ncol = 1))
+pdf(paste0(save_path, "SpatialDimPlot_PC1to", dims, "res", res, ".pdf"))
+  x <- SpatialDimPlot(integrated_d28_cohort, image.alpha = 0, crop = FALSE, pt.size.factor = 1.2)
+  y <- SpatialDimPlot(integrated_d28_cohort, alpha = c(0.4, 0.4), crop = FALSE)
+
+  for (i in seq_along(all_samples)) {
+    fig1 <- x[[i]]
     print(fig1)
   }
-  for(i in 1:8){
-    fig2<-y[[i]]
-    #print(ggarrange(fig1,fig2, ncol = 1))
+  for (i in seq_along(all_samples)) {
+    fig2 <- y[[i]]
     print(fig2)
   }
-  
+
   rm(x, y)
-dev.off()  
+dev.off()
 
-integrated_d28_cohort$group <- factor(integrated_d28_cohort$group, levels = c("healthy","healthy_inf","inf"))
+integrated_d28_cohort$group <- factor(integrated_d28_cohort$group, levels = c("healthy", "healthy_inf", "inf"))
 
-#normalise counts in SCT based on median UMI
-integrated_d28_cohort <- PrepSCTFindMarkers(integrated_d28_cohort, verbose = T)
+# Normalise counts in SCT based on median UMI
+integrated_d28_cohort <- PrepSCTFindMarkers(integrated_d28_cohort, verbose = TRUE)
 
-saveRDS(integrated_d28_cohort, paste0(save_path, "integrated_d28_cohort_dims",dims,"_res_",res,".Rds"))
+saveRDS(integrated_d28_cohort, paste0(save_path, "integrated_d28_cohort_dims", dims, "_res_", res, ".Rds"))
 ```
 
 ```{r read_RDS_if_available}
-dims=30
-res=0.6
-integrated_d28_cohort <- readRDS(paste0(save_path, "integrated_d28_cohort_dims",dims,"_res_",res,".Rds"))
+dims <- 30
+res <- 0.4
+integrated_d28_cohort <- readRDS(paste0(save_path, "integrated_d28_cohort_dims", dims, "_res_", res, ".Rds"))
 ```
-
