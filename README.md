@@ -83,14 +83,44 @@ other attached packages:
 - End-to-end analysis (R scripts): ~1–2 hours on Windows 10 with 64GB RAM, 8-core CPU (Intel Core i7-9700 or equivalent).
 
 ### Additional data files required:
-The following pre-processed `.rds` files are available on [Zenodo](https://zenodo.org/) (DOI to be added upon publication):
+The following files are available on [Zenodo](https://zenodo.org/) (DOI to be added upon publication):
+
+**Pre-processed Seurat objects (.rds):**
 
 | File | Required by |
 |------|-------------|
 | `integrated_sd2705_dims15_res0.4.rds` | `scRNAseq_downstream_analysis.Rmd` |
 | `integrated_d28_cohort_dims30_res_0.4.Rds` | `spatial_downstream_analysis.Rmd` |
 
-Download these files from Zenodo and place them in the appropriate directories as referenced in each notebook's user-configurable paths section.
+**MSI coregistration data (neg/pos ion mode CSVs per sample):**
+
+| File | Description |
+|------|-------------|
+| `data/coregistration/I2/neg/infected_I2.csv` | Infected mouse I2 — negative ion mode |
+| `data/coregistration/I2/pos/infected_I2.csv` | Infected mouse I2 — positive ion mode |
+| `data/coregistration/I3/neg/infected_I3.csv` | Infected mouse I3 — negative ion mode |
+| `data/coregistration/I3/pos/infected_I3.csv` | Infected mouse I3 — positive ion mode |
+| `data/coregistration/I4/neg/infected_I4.csv` | Infected mouse I4 — negative ion mode |
+| `data/coregistration/I4/pos/infected_I4.csv` | Infected mouse I4 — positive ion mode |
+| `data/coregistration/I5/neg/infected_I5.csv` | Infected mouse I5 — negative ion mode |
+| `data/coregistration/I5/pos/infected_I5.csv` | Infected mouse I5 — positive ion mode |
+| `data/coregistration/N1/neg/naive_N1.csv` | Naive mouse N1 — negative ion mode |
+| `data/coregistration/N1/pos/naive_N1.csv` | Naive mouse N1 — positive ion mode |
+| `data/coregistration/N2/neg/naive_N2.csv` | Naive mouse N2 — negative ion mode |
+| `data/coregistration/N2/pos/naive_N2.csv` | Naive mouse N2 — positive ion mode |
+| `data/coregistration/N3/neg/naive_N3.csv` | Naive mouse N3 — negative ion mode |
+| `data/coregistration/N3/pos/naive_N3.csv` | Naive mouse N3 — positive ion mode |
+| `data/coregistration/N4/neg/naive_N4.csv` | Naive mouse N4 — negative ion mode |
+| `data/coregistration/N4/pos/naive_N4.csv` | Naive mouse N4 — positive ion mode |
+
+**Other supporting data:**
+
+| File | Required by |
+|------|-------------|
+| `data/cell2location/means_cell_abundance_w_sf_barcoded.csv` | `spatial_downstream_analysis.Rmd` — cell2location cell-type abundance estimates |
+| `data/mz_identification/Final_Identification_All.xlsx` | `spatial_downstream_analysis.Rmd` — lipid species identification for m/z values |
+
+Download these files from Zenodo, preserving the `data/` directory structure, and place them in the repository root.
 
 ## Repository Structure & Instructions
 
